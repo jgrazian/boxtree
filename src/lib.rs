@@ -9,6 +9,7 @@ type Vector<const D: usize> = [f32; D];
 
 /// A ray in D dimensional space.
 /// Starts at `origin` and goes in the direction `direction`.
+#[derive(Clone, Copy, Debug)]
 pub struct Ray<const D: usize> {
     origin: Vector<D>,
     direction: Vector<D>,
@@ -186,7 +187,7 @@ impl<T: Bounded<D>, const D: usize> Bounded<D> for Bvh<T, D> {
     }
 }
 
-impl<T: Bounded<D>, const D: usize> Bvh<T, D> {
+impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
     pub fn build(objects: Vec<T>) -> Self {
         let centroids: Vec<_> = objects.iter().map(|obj| obj.bounds().centroid()).collect();
         let mut indexes: Vec<usize> = (0..objects.len()).collect();
@@ -309,46 +310,35 @@ impl<T: Bounded<D>, const D: usize> Bvh<T, D> {
         }
     }
 
-    /// Get all instances of ray intersecting with the BVH.
-    pub fn query_ray(&self, ray: &Ray<D>) -> Vec<(f32, usize)> {
-        const T_MIN: f32 = 0.0;
-        const T_MAX: f32 = f32::INFINITY;
-        let mut results = Vec::new();
+    pub fn query_ray(&'a self, ray: Ray<D>) -> impl Iterator<Item = (f32, usize)> + '_ {
+        let pred = move |bounds: &Bounds<D>| bounds.intersect(&ray, 0.0, f32::INFINITY).is_some();
 
-        match &self.root {
-            BvhNode::Node { bounds, children } => match bounds.intersect(ray, T_MIN, T_MAX) {
-                None => (),
-                Some(_) => {
-                    let left_hit = children[0].intersect(ray, T_MIN, T_MAX);
-                    let right_hit = children[1].intersect(ray, T_MIN, T_MAX);
-                    match (left_hit, right_hit) {
-                        (None, None) => (),
-                        (Some((t, idx)), None) => results.push((t, idx)),
-                        (None, Some((t, idx))) => results.push((t, idx)),
-                        (Some((t0, idx0)), Some((t1, idx1))) => {
-                            results.push((t0, idx0));
-                            results.push((t1, idx1));
-                        }
-                    }
-                }
+        BvhIterator {
+            bvh: self,
+            predicate: Box::new(pred),
+            stack: vec![&self.root],
+        }
+        .filter_map(move |n| match n {
+            BvhIteratorNode::Node(_) => None,
+            BvhIteratorNode::Leaf { id, obj } => match obj.intersect(&ray, 0.0, f32::INFINITY) {
+                None => None,
+                Some((t, _)) => Some((t, id)),
             },
-            BvhNode::Leaf { bounds, data } => match bounds.intersect(ray, T_MIN, T_MAX) {
-                None => (),
-                Some((t, _)) => results.push((t, *data)),
-            },
-        };
-
-        results
+        })
     }
 }
 
-impl<'a, T: Bounded<D>, const D: usize> IntoIterator for &'a Bvh<T, D> {
+impl<'a, T, const D: usize> IntoIterator for &'a Bvh<T, D>
+where
+    T: Bounded<D>,
+{
     type Item = BvhIteratorNode<'a, T, D>;
     type IntoIter = BvhIterator<'a, T, D>;
 
     fn into_iter(self) -> Self::IntoIter {
         BvhIterator {
             bvh: self,
+            predicate: Box::new(|_| true),
             stack: vec![&self.root],
         }
     }
@@ -360,13 +350,19 @@ pub enum BvhIteratorNode<'a, T: Bounded<D>, const D: usize> {
     Leaf { id: usize, obj: &'a T },
 }
 
-#[derive(Debug, Clone)]
-pub struct BvhIterator<'a, T: Bounded<D>, const D: usize> {
+pub struct BvhIterator<'a, T, const D: usize>
+where
+    T: Bounded<D>,
+{
     bvh: &'a Bvh<T, D>,
+    predicate: Box<dyn Fn(&Bounds<D>) -> bool>,
     stack: Vec<&'a BvhNode<D>>,
 }
 
-impl<'a, T: Bounded<D>, const D: usize> Iterator for BvhIterator<'a, T, D> {
+impl<'a, T, const D: usize> Iterator for BvhIterator<'a, T, D>
+where
+    T: Bounded<D>,
+{
     type Item = BvhIteratorNode<'a, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -376,18 +372,25 @@ impl<'a, T: Bounded<D>, const D: usize> Iterator for BvhIterator<'a, T, D> {
         };
 
         match node {
-            BvhNode::Leaf { data, .. } => {
-                let object = &self.bvh.objects[*data];
-                Some(BvhIteratorNode::Leaf {
-                    id: *data,
-                    obj: object,
-                })
+            BvhNode::Leaf { bounds, data, .. } => {
+                if (self.predicate)(bounds) {
+                    let object = &self.bvh.objects[*data];
+                    Some(BvhIteratorNode::Leaf {
+                        id: *data,
+                        obj: object,
+                    })
+                } else {
+                    self.next()
+                }
             }
             BvhNode::Node { bounds, children } => {
-                self.stack.push(&children[1]);
-                self.stack.push(&children[0]);
-
-                Some(BvhIteratorNode::Node(&bounds))
+                if (self.predicate)(bounds) {
+                    self.stack.push(&children[1]);
+                    self.stack.push(&children[0]);
+                    Some(BvhIteratorNode::Node(&bounds))
+                } else {
+                    self.next()
+                }
             }
         }
     }
@@ -682,6 +685,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bvh_query_ray_2d() {
+        let objects = vec![
+            Bounds::new([3.0, -2.0], [4.0, -1.0]), // 0
+            Bounds::new([4.5, 0.0], [5.5, 1.0]),   // 1
+            Bounds::new([0.0, 1.0], [1.0, 2.0]),   // 2
+            Bounds::new([1.5, -0.5], [2.5, 0.5]),  // 3
+        ];
+        let bvh = Bvh2d::build(objects);
+
+        let mut ray_hits = bvh.query_ray(Ray::new([0.0, 0.0], [1.0, 0.1]));
+        assert_eq!(ray_hits.next().unwrap(), (1.5, 3 as usize));
+        assert_eq!(ray_hits.next().unwrap(), (4.5, 1 as usize));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn bvh_query_ray_3d() {
+        let objects = vec![
+            Bounds::new([3.0, 3.0, 3.0], [4.0, 4.0, 4.0]), // 0
+            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]), // 1
+            Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]), // 2
+            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]), // 3
+        ];
+        let bvh = Bvh3d::build(objects);
+
+        let mut ray_hits = bvh.query_ray(Ray::new([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]));
+        assert_eq!(ray_hits.next().unwrap(), (1.0, 1 as usize));
+        assert_eq!(ray_hits.next().unwrap(), (2.0, 3 as usize));
+        assert_eq!(ray_hits.next().unwrap(), (3.0, 2 as usize));
+        assert_eq!(ray_hits.next().unwrap(), (4.0, 0 as usize));
+        assert!(ray_hits.next().is_none());
+    }
+
     #[bench]
     fn bench_bvh_build_2d(b: &mut Bencher) {
         let objects: Vec<Bounds<2>> = (0..100)
@@ -705,7 +742,12 @@ mod tests {
             .collect();
         let bvh = Bvh2d::build(objects);
         let r = ([-0.5, 49.5], [1.0, 0.0]).into();
-        b.iter(|| bvh.intersect(&r, f32::MIN, f32::MAX));
+        b.iter(|| {
+            assert_eq!(
+                bvh.intersect(&r, f32::MIN, f32::MAX).unwrap().1,
+                &Bounds::new([49.0; 2], [50.0; 2])
+            )
+        });
     }
 
     #[bench]
@@ -715,7 +757,12 @@ mod tests {
             .collect();
         let bvh = Bvh3d::build(objects);
         let r = ([-0.5, 49.5, 49.5], [1.0, 0.0, 0.0]).into();
-        b.iter(|| bvh.intersect(&r, f32::MIN, f32::MAX));
+        b.iter(|| {
+            assert_eq!(
+                bvh.intersect(&r, f32::MIN, f32::MAX).unwrap().1,
+                &Bounds::new([49.0; 3], [50.0; 3])
+            )
+        });
     }
 
     #[bench]
@@ -734,5 +781,31 @@ mod tests {
             .collect();
         let bvh = Bvh3d::build(objects);
         b.iter(|| bvh.into_iter().map(|_| ()).count());
+    }
+
+    #[bench]
+    fn bench_bvh_query_ray_2d(b: &mut Bencher) {
+        let objects: Vec<Bounds<2>> = (0..100)
+            .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
+            .collect();
+        let bvh = Bvh2d::build(objects);
+        b.iter(|| {
+            bvh.query_ray(Ray::new([0.0, 0.0], [1.0, 1.0]))
+                .map(|_| ())
+                .count()
+        });
+    }
+
+    #[bench]
+    fn bench_bvh_query_ray_3d(b: &mut Bencher) {
+        let objects: Vec<Bounds<3>> = (0..100)
+            .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
+            .collect();
+        let bvh = Bvh3d::build(objects);
+        b.iter(|| {
+            bvh.query_ray(Ray::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]))
+                .map(|_| ())
+                .count()
+        });
     }
 }
