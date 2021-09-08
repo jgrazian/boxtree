@@ -34,7 +34,18 @@ pub trait Bounded<const D: usize>: Clone {
     type Bound: Bounded<D>;
 
     fn bounds(&self) -> Bounds<D>;
-    fn intersect(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &Self::Bound)>;
+}
+
+pub trait RayHittable<const D: usize>: Bounded<D> {
+    fn ray_hit(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &Self::Bound)>;
+}
+
+pub trait BoundsHittable<const D: usize>: Bounded<D> {
+    fn bounds_hit(&self, bounds: &Bounds<D>) -> bool;
+}
+
+pub trait PointHittable<const D: usize>: Bounded<D> {
+    fn point_hit(&self, point: &Vector<D>) -> bool;
 }
 
 /// A bounding box in D dimensional space.
@@ -82,10 +93,6 @@ impl<const D: usize> Bounds<D> {
 
         Bounds { min: min, max: max }
     }
-
-    fn overlap(&self, other: &Bounds<D>) -> bool {
-        (0..D).all(|i| self.min[i] <= other.max[i] && self.max[i] >= other.min[i])
-    }
 }
 
 impl<const D: usize> Bounded<D> for Bounds<D> {
@@ -94,8 +101,10 @@ impl<const D: usize> Bounded<D> for Bounds<D> {
     fn bounds(&self) -> Bounds<D> {
         *self
     }
+}
 
-    fn intersect(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &Self::Bound)> {
+impl<const D: usize> RayHittable<D> for Bounds<D> {
+    fn ray_hit(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &Self::Bound)> {
         let mut loc_t_min = t_min;
         let mut loc_t_max = t_max;
 
@@ -115,10 +124,22 @@ impl<const D: usize> Bounded<D> for Bounds<D> {
         }
         match (loc_t_min < 0.0, loc_t_max < 0.0) {
             (true, true) => None,
-            (true, false) => Some((loc_t_max, self)),
-            (false, true) => Some((loc_t_min, self)),
-            (false, false) => Some((loc_t_min, self)),
+            (true, false) => Some((loc_t_max, &self)),
+            (false, true) => Some((loc_t_min, &self)),
+            (false, false) => Some((loc_t_min, &self)),
         }
+    }
+}
+
+impl<const D: usize> BoundsHittable<D> for Bounds<D> {
+    fn bounds_hit(&self, bounds: &Bounds<D>) -> bool {
+        (0..D).all(|i| self.min[i] <= bounds.max[i] && self.max[i] >= bounds.min[i])
+    }
+}
+
+impl<const D: usize> PointHittable<D> for Bounds<D> {
+    fn point_hit(&self, point: &Vector<D>) -> bool {
+        (0..D).all(|i| self.min[i] <= point[i] && self.max[i] >= point[i])
     }
 }
 
@@ -141,46 +162,9 @@ pub struct Bvh<T: Bounded<D>, const D: usize> {
     root: BvhNode<D>,
 }
 
-impl<T: Bounded<D>, const D: usize> Bounded<D> for Bvh<T, D> {
-    type Bound = T;
-
-    fn bounds(&self) -> Bounds<D> {
-        match self.root {
-            BvhNode::Node { bounds, .. } => bounds,
-            BvhNode::Leaf { data } => self.objects[data.0].bounds(),
-        }
-    }
-
-    fn intersect(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &Self::Bound)> {
-        let mut stack = Vec::with_capacity(32);
-        stack.push(&self.root);
-        let mut result = None;
-
-        while let Some(node) = stack.pop() {
-            let t_max = result.map_or(t_max, |(t, _)| t);
-            match node {
-                BvhNode::Node { bounds, children } => {
-                    if bounds.intersect(ray, t_min, t_max).is_some() {
-                        stack.push(&children[1]);
-                        stack.push(&children[0]);
-                    }
-                }
-                BvhNode::Leaf { data, .. } => {
-                    let obj = &self.objects[data.0];
-                    match obj.intersect(ray, t_min, t_max) {
-                        None => (),
-                        Some((t, _)) => {
-                            result = Some((t, obj));
-                        }
-                    }
-                }
-            }
-        }
-        result
-    }
-}
-
 impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
+    const STACK_SIZE: usize = 32;
+
     pub fn build(objects: Vec<T>) -> Self {
         let centroids: Vec<_> = objects.iter().map(|obj| obj.bounds().centroid()).collect();
         let mut indexes: Vec<BvhIndex> = (0..objects.len()).map(|v| BvhIndex(v)).collect();
@@ -296,19 +280,52 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
 
     pub fn query_ray(&'a self, ray: &'a Ray<D>) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
         let predicate =
-            move |bounds: &Bounds<D>| bounds.intersect(&ray, 0.0, f32::INFINITY).is_some();
-        let mut stack = Vec::with_capacity(32);
+            move |bounds: &Bounds<D>| bounds.ray_hit(&ray, 0.0, f32::INFINITY).is_some();
+
+        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.root);
 
         BvhLeafIterator {
             bvh: self,
             predicate,
-            stack: stack,
+            stack,
+        }
+    }
+
+    pub fn query_bounds(
+        &'a self,
+        bounds: &'a Bounds<D>,
+    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+        let predicate = move |bounds2: &Bounds<D>| bounds.bounds_hit(&bounds2);
+
+        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+        stack.push(&self.root);
+
+        BvhLeafIterator {
+            bvh: self,
+            predicate,
+            stack,
+        }
+    }
+
+    pub fn query_point(
+        &'a self,
+        point: &'a Vector<D>,
+    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+        let predicate = move |bounds: &Bounds<D>| bounds.point_hit(&point);
+
+        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+        stack.push(&self.root);
+
+        BvhLeafIterator {
+            bvh: self,
+            predicate,
+            stack,
         }
     }
 
     pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
-        let mut stack = Vec::with_capacity(32);
+        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.root);
 
         BvhLeafIterator {
@@ -319,10 +336,80 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BvhIteratorNode<'a, T: Bounded<D>, const D: usize> {
-    Node(&'a Bounds<D>),
-    Leaf { id: BvhIndex, obj: &'a T },
+impl<T: Bounded<D>, const D: usize> Bounded<D> for Bvh<T, D> {
+    type Bound = T;
+
+    fn bounds(&self) -> Bounds<D> {
+        match self.root {
+            BvhNode::Node { bounds, .. } => bounds,
+            BvhNode::Leaf { data } => self.objects[data.0].bounds(),
+        }
+    }
+}
+
+impl<T: RayHittable<D>, const D: usize> RayHittable<D> for Bvh<T, D> {
+    fn ray_hit(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &T)> {
+        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+        stack.push(&self.root);
+        let mut result = None;
+
+        while let Some(node) = stack.pop() {
+            let t_max = result.map_or(t_max, |(t, _)| t);
+            match node {
+                BvhNode::Node { bounds, children } => {
+                    if bounds.ray_hit(ray, t_min, t_max).is_some() {
+                        stack.push(&children[1]);
+                        stack.push(&children[0]);
+                    }
+                }
+                BvhNode::Leaf { data, .. } => {
+                    let obj = &self.objects[data.0];
+                    match obj.ray_hit(ray, t_min, t_max) {
+                        None => (),
+                        Some((t, _)) => {
+                            result = Some((t, obj));
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+}
+
+impl<'a, T: RayHittable<D>, const D: usize> Bvh<T, D> {
+    pub fn query_ray_exact(
+        &'a self,
+        ray: &'a Ray<D>,
+        t_min: f32,
+        t_max: f32,
+    ) -> impl Iterator<Item = (f32, BvhIndex, &T)> + '_ {
+        self.query_ray(ray)
+            .filter_map(move |(idx, obj)| match obj.ray_hit(ray, t_min, t_max) {
+                None => None,
+                Some((t, _)) => Some((t, idx, obj)),
+            })
+    }
+}
+
+impl<'a, T: BoundsHittable<D>, const D: usize> Bvh<T, D> {
+    pub fn query_bounds_exact(
+        &'a self,
+        bounds: &'a Bounds<D>,
+    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+        self.query_bounds(bounds)
+            .filter(move |(_, obj)| obj.bounds_hit(bounds))
+    }
+}
+
+impl<'a, T: PointHittable<D>, const D: usize> Bvh<T, D> {
+    pub fn query_point_exact(
+        &'a self,
+        point: &'a Vector<D>,
+    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+        self.query_point(point)
+            .filter(move |(_, obj)| obj.point_hit(point))
+    }
 }
 
 pub struct BvhLeafIterator<'a, T, F, const D: usize>
@@ -362,19 +449,18 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+mod bounds {
     use super::*;
-    use test::Bencher;
 
     #[test]
-    fn bounds_axis_length_2d() {
+    fn axis_length_2d() {
         let b = Bounds::new([0.0, 0.0], [1.2, 1.3]);
         assert_eq!(b.axis_length(0), 1.2);
         assert_eq!(b.axis_length(1), 1.3);
     }
 
     #[test]
-    fn bounds_axis_length_3d() {
+    fn axis_length_3d() {
         let b = Bounds::new([0.0, 0.0, 0.0], [1.2, 1.3, 1.4]);
         assert_eq!(b.axis_length(0), 1.2);
         assert_eq!(b.axis_length(1), 1.3);
@@ -382,93 +468,134 @@ mod tests {
     }
 
     #[test]
-    fn bounds_surface_area_2d() {
+    fn surface_area_2d() {
         let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
         assert_eq!(a.surface_area(), 1.0);
     }
 
     #[test]
-    fn bounds_surface_area_3d() {
+    fn surface_area_3d() {
         let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         assert_eq!(a.surface_area(), 6.0);
     }
 
     #[test]
-    fn bounds_union_2d() {
+    fn union_2d() {
         let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
         let b = Bounds::new([1.0, 1.0], [2.0, 2.0]);
         assert_eq!(a.union(&b), Bounds::new([0.0, 0.0], [2.0, 2.0]));
     }
 
     #[test]
-    fn bounds_union_3d() {
+    fn union_3d() {
         let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let b = Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]);
         assert_eq!(a.union(&b), Bounds::new([0.0, 0.0, 0.0], [2.0, 2.0, 2.0]));
     }
 
     #[test]
-    fn bounds_overlap_2d() {
-        let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
-        let b = Bounds::new([2.0, 2.0], [3.0, 3.0]);
-        assert!(!a.overlap(&b));
-        let c = Bounds::new([0.5, 0.5], [1.5, 1.5]);
-        assert!(a.overlap(&c));
-    }
-
-    #[test]
-    fn bounds_overlap_3d() {
-        let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-        let b = Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]);
-        assert!(!a.overlap(&b));
-        let c = Bounds::new([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
-        assert!(a.overlap(&c));
-    }
-
-    #[test]
-    fn bounds_intersect_2d() {
+    fn ray_hit_2d() {
         let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
         let r1 = ([0.5, 2.0], [0.0, -1.0]).into(); // intersects
         let r2 = ([0.5, 0.5], [0.0, 1.0]).into(); // intersects from inside
         let r3 = ([0.5, 2.0], [1.0, 0.0]).into(); // miss
         let r4 = ([0.5, 2.0], [0.0, 1.0]).into(); // miss
-        assert_eq!(a.intersect(&r1, f32::MIN, f32::MAX), Some((1.0, &a)));
-        assert_eq!(a.intersect(&r2, f32::MIN, f32::MAX), Some((0.5, &a)));
-        assert_eq!(a.intersect(&r3, f32::MIN, f32::MAX), None);
-        assert_eq!(a.intersect(&r4, f32::MIN, f32::MAX), None);
+        assert_eq!(a.ray_hit(&r1, f32::MIN, f32::MAX), Some((1.0, &a)));
+        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((0.5, &a)));
+        assert_eq!(a.ray_hit(&r3, f32::MIN, f32::MAX), None);
+        assert_eq!(a.ray_hit(&r4, f32::MIN, f32::MAX), None);
 
         let b = Bounds::new([3.0, -2.0], [4.0, -1.0]);
         let r = ([4.5, -2.5], [1.0, 1.0]).into();
-        assert_eq!(b.intersect(&r, f32::MIN, f32::MAX), None);
+        assert_eq!(b.ray_hit(&r, f32::MIN, f32::MAX), None);
 
         let b = Bounds::new([4.5, 0.0], [5.5, 1.0]);
         let r = ([4.5, -2.5], [1.0, 1.0]).into();
-        assert_eq!(b.intersect(&r, f32::MIN, f32::MAX), None);
+        assert_eq!(b.ray_hit(&r, f32::MIN, f32::MAX), None);
     }
 
     #[test]
-    fn bounds_intersect_3d() {
+    fn ray_hit_3d() {
         let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let r1 = ([0.5, 2.0, 0.5], [0.0, -1.0, 0.0]).into(); // intersects
         let r2 = ([0.5, 0.5, 0.5], [0.0, 1.0, 0.0]).into(); // intersects from inside
         let r3 = ([0.5, 2.0, 0.5], [1.0, 0.0, 0.0]).into(); // miss
         let r4 = ([0.5, 2.0, 0.5], [0.0, 1.0, 0.0]).into(); // miss
-        assert_eq!(a.intersect(&r1, f32::MIN, f32::MAX), Some((1.0, &a)));
-        assert_eq!(a.intersect(&r2, f32::MIN, f32::MAX), Some((0.5, &a)));
-        assert_eq!(a.intersect(&r3, f32::MIN, f32::MAX), None);
-        assert_eq!(a.intersect(&r4, f32::MIN, f32::MAX), None);
+        assert_eq!(a.ray_hit(&r1, f32::MIN, f32::MAX), Some((1.0, &a)));
+        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((0.5, &a)));
+        assert_eq!(a.ray_hit(&r3, f32::MIN, f32::MAX), None);
+        assert_eq!(a.ray_hit(&r4, f32::MIN, f32::MAX), None);
     }
 
     #[test]
-    fn bvh_build_2d() {
+    fn bounds_hit_2d() {
+        let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
+        let b = Bounds::new([2.0, 2.0], [3.0, 3.0]);
+        assert!(!a.bounds_hit(&b));
+        let c = Bounds::new([0.5, 0.5], [1.5, 1.5]);
+        assert!(a.bounds_hit(&c));
+    }
+
+    #[test]
+    fn bounds_hit_3d() {
+        let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]);
+        assert!(!a.bounds_hit(&b));
+        let c = Bounds::new([0.5, 0.5, 0.5], [1.5, 1.5, 1.5]);
+        assert!(a.bounds_hit(&c));
+    }
+
+    #[test]
+    fn point_hit_2d() {
+        let a = Bounds::new([0.0, 0.0], [1.0, 1.0]);
+        let p = [2.0, 2.0];
+        assert!(!a.point_hit(&p));
+        let p = [0.5, 0.5];
+        assert!(a.point_hit(&p));
+    }
+
+    #[test]
+    fn point_hit_3d() {
+        let a = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let p = [2.0, 2.0, 2.0];
+        assert!(!a.point_hit(&p));
+        let p = [0.5, 0.5, 0.5];
+        assert!(a.point_hit(&p));
+    }
+}
+
+#[cfg(test)]
+mod bvh {
+    use super::*;
+
+    /// │╔══╤═╗ ╔══╤═╗
+    /// │╟─┐└─╢ ╟─┐└─╢
+    /// │╚═╧══╝ ╚═╧══╝
+    /// ┼──────────
+    fn setup_2d() -> Bvh2d<Bounds<2>> {
         let objects = vec![
-            Bounds::new([3.0, -2.0], [4.0, -1.0]),
-            Bounds::new([4.5, 0.0], [5.5, 1.0]),
-            Bounds::new([0.0, 1.0], [1.0, 2.0]),
-            Bounds::new([1.5, -0.5], [2.5, 0.5]),
+            Bounds::new([0.0, 0.0], [1.0, 1.0]),
+            Bounds::new([1.0, 1.0], [2.0, 2.0]),
+            Bounds::new([3.0, 0.0], [4.0, 1.0]),
+            Bounds::new([4.0, 1.0], [5.0, 2.0]),
         ];
-        let bvh = Bvh2d::build(objects);
-        assert_eq!(bvh.bounds(), Bounds::new([0.0, -2.0], [5.5, 2.0]));
+        Bvh2d::build(objects)
+    }
+
+    fn setup_3d() -> Bvh3d<Bounds<3>> {
+        let objects = vec![
+            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]),
+            Bounds::new([3.0, 0.0, 0.0], [4.0, 1.0, 1.0]),
+            Bounds::new([4.0, 1.0, 1.0], [5.0, 2.0, 2.0]),
+        ];
+        Bvh3d::build(objects)
+    }
+
+    #[test]
+    fn build_2d() {
+        let bvh = setup_2d();
+        assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0], [5.0, 2.0]));
 
         let objects = vec![
             Bounds::new([0.0, 0.0], [1.0, 1.0]),
@@ -478,26 +605,12 @@ mod tests {
         ];
         let bvh = Bvh2d::build(objects);
         assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0], [1.0, 1.0]));
-
-        let objects = vec![
-            Bounds::new([3.0, -2.0], [4.0, -1.0]),
-            Bounds::new([4.5, 0.0], [5.5, 1.0]),
-            Bounds::new([0.0, 1.0], [1.0, 2.0]),
-        ];
-        let bvh = Bvh2d::build(objects);
-        assert_eq!(bvh.bounds(), Bounds::new([0.0, -2.0], [5.5, 2.0]));
     }
 
     #[test]
-    fn bvh_build_3d() {
-        let objects = vec![
-            Bounds::new([3.0, 3.0, 3.0], [4.0, 4.0, 4.0]),
-            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
-            Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]),
-            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]),
-        ];
-        let bvh = Bvh3d::build(objects);
-        assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0, 0.0], [4.0, 4.0, 4.0]));
+    fn build_3d() {
+        let bvh = setup_3d();
+        assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0, 0.0], [5.0, 2.0, 2.0]));
 
         let objects = vec![
             Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
@@ -507,186 +620,285 @@ mod tests {
         ];
         let bvh = Bvh3d::build(objects);
         assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
-
-        let objects = vec![
-            Bounds::new([3.0, 3.0, 3.0], [4.0, 4.0, 4.0]),
-            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
-            Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]),
-        ];
-        let bvh = Bvh3d::build(objects);
-        assert_eq!(bvh.bounds(), Bounds::new([0.0, 0.0, 0.0], [4.0, 4.0, 4.0]));
     }
 
     #[test]
-    fn bvh_intersect_2d() {
-        let objects = vec![
-            Bounds::new([3.0, -2.0], [4.0, -1.0]), // 0
-            Bounds::new([4.5, 0.0], [5.5, 1.0]),   // 1
-            Bounds::new([0.0, 1.0], [1.0, 2.0]),   // 2
-            Bounds::new([1.5, -0.5], [2.5, 0.5]),  // 3
-        ];
-        let bvh = Bvh2d::build(objects);
+    fn query_ray_2d() {
+        let bvh = setup_2d();
 
-        let r1 = ([3.5, -2.5], [0.0, 1.0]).into(); // hits 0
-        let intersection = bvh.intersect(&r1, f32::MIN, f32::MAX);
-        assert!(intersection.is_some());
-        assert_eq!(intersection.unwrap().0, 0.5);
-
-        let r2 = ([6.5, 0.5], [-1.0, 0.0]).into(); // hits 1
-        let intersection = bvh.intersect(&r2, f32::MIN, f32::MAX);
-        assert!(intersection.is_some());
-        assert_eq!(intersection.unwrap().0, 1.0);
-
-        let r3 = ([4.5, -2.5], [1.0, 1.0]).into(); // Hits bounding box but not a leaf
-        let intersection = bvh.intersect(&r3, f32::MIN, f32::MAX);
-        dbg!(&intersection);
-        assert!(intersection.is_none());
-    }
-
-    #[test]
-    fn bvh_intersect_3d() {
-        let objects = vec![
-            Bounds::new([3.0, 3.0, 3.0], [4.0, 4.0, 4.0]), // 0
-            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]), // 1
-            Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]), // 2
-            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]), // 3
-        ];
-        let bvh = Bvh3d::build(objects);
-
-        let r1 = ([3.5, 5.0, 3.5], [0.0, -1.0, 0.0]).into(); // hits 0
-        let intersection = bvh.intersect(&r1, f32::MIN, f32::MAX);
-        assert!(intersection.is_some());
-        assert_eq!(intersection.unwrap().0, 1.0);
-
-        let r2 = ([0.5, 0.5, -0.5], [0.0, 0.0, 1.0]).into(); // hits 1
-        let intersection = bvh.intersect(&r2, f32::MIN, f32::MAX);
-        assert!(intersection.is_some());
-        assert_eq!(intersection.unwrap().0, 0.5);
-
-        let r3 = ([0.5, -0.5, 3.5], [0.0, 1.0, 0.0]).into(); // Hits bounding box but not a leaf
-        let intersection = bvh.intersect(&r3, f32::MIN, f32::MAX);
-        assert!(intersection.is_none());
-    }
-
-    #[test]
-    fn bvh_query_ray_2d() {
-        let objects = vec![
-            Bounds::new([3.0, -2.0], [4.0, -1.0]), // 0
-            Bounds::new([4.5, 0.0], [5.5, 1.0]),   // 1
-            Bounds::new([0.0, 1.0], [1.0, 2.0]),   // 2
-            Bounds::new([1.5, -0.5], [2.5, 0.5]),  // 3
-        ];
-        let bvh = Bvh2d::build(objects);
-
-        let r = Ray::new([0.0, 0.0], [1.0, 0.1]);
+        let r = Ray::new([1.0, 0.0], [0.0, 1.0]);
         let mut ray_hits = bvh.query_ray(&r);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(2), &bvh.objects[2]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(3), &bvh.objects[3]));
         assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
         assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
     #[test]
-    fn bvh_query_ray_3d() {
-        let objects = vec![
-            Bounds::new([3.0, 3.0, 3.0], [4.0, 4.0, 4.0]), // 0
-            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]), // 1
-            Bounds::new([2.0, 2.0, 2.0], [3.0, 3.0, 3.0]), // 2
-            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]), // 3
-        ];
-        let bvh = Bvh3d::build(objects);
+    fn query_ray_3d() {
+        let bvh = setup_3d();
 
-        let r = Ray::new([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
+        let r = Ray::new([1.0, 1.0, 0.0], [0.0, 0.0, 1.0]);
         let mut ray_hits = bvh.query_ray(&r);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
         assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(3), &bvh.objects[3]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_ray_exact_2d() {
+        let bvh = setup_2d();
+
+        let r = Ray::new([0.0, 0.5], [1.0, 0.0]);
+        let mut ray_hits = bvh.query_ray_exact(&r, 0.0, f32::MAX);
+        assert_eq!(
+            ray_hits.next().unwrap(),
+            (0.0, BvhIndex(0), &bvh.objects[0])
+        );
+        assert_eq!(
+            ray_hits.next().unwrap(),
+            (3.0, BvhIndex(2), &bvh.objects[2])
+        );
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_ray_exact_3d() {
+        let bvh = setup_3d();
+
+        let r = Ray::new([0.0, 0.5, 0.5], [1.0, 0.0, 0.0]);
+        let mut ray_hits = bvh.query_ray_exact(&r, 0.0, f32::MAX);
+        assert_eq!(
+            ray_hits.next().unwrap(),
+            (0.0, BvhIndex(0), &bvh.objects[0])
+        );
+        assert_eq!(
+            ray_hits.next().unwrap(),
+            (3.0, BvhIndex(2), &bvh.objects[2])
+        );
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_bounds_2d() {
+        let bvh = setup_2d();
+
+        let b = Bounds::new([0.0, 0.0], [1.0, 1.0]);
+        let mut ray_hits = bvh.query_bounds(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_bounds_3d() {
+        let bvh = setup_3d();
+
+        let b = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let mut ray_hits = bvh.query_bounds(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_bounds_exact_2d() {
+        let bvh = setup_2d();
+
+        let b = Bounds::new([0.0, 0.0], [5.0, 0.5]);
+        let mut ray_hits = bvh.query_bounds_exact(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
         assert_eq!(ray_hits.next().unwrap(), (BvhIndex(2), &bvh.objects[2]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_bounds_exact_3d() {
+        let bvh = setup_3d();
+
+        let b = Bounds::new([0.0, 0.0, 0.0], [5.0, 0.5, 0.5]);
+        let mut ray_hits = bvh.query_bounds_exact(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(2), &bvh.objects[2]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_point_2d() {
+        let bvh = setup_2d();
+
+        let b = [0.5, 0.5];
+        let mut ray_hits = bvh.query_point(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_point_3d() {
+        let bvh = setup_3d();
+
+        let b = [0.5, 0.5, 0.5];
+        let mut ray_hits = bvh.query_point(&b);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert!(ray_hits.next().is_none());
+    }
+
+    #[test]
+    fn query_point_exact_2d() {
+        let bvh = setup_2d();
+
+        let p = [0.5, 0.5];
+        let mut ray_hits = bvh.query_point_exact(&p);
         assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
         assert!(ray_hits.next().is_none());
     }
 
-    #[bench]
-    fn bench_bvh_build_2d(b: &mut Bencher) {
+    #[test]
+    fn query_point_exact_3d() {
+        let bvh = setup_3d();
+
+        let p = [0.5, 0.5, 0.5];
+        let mut ray_hits = bvh.query_point_exact(&p);
+        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert!(ray_hits.next().is_none());
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use test::Bencher;
+
+    fn setup_2d() -> Bvh2d<Bounds<2>> {
         let objects: Vec<Bounds<2>> = (0..100)
             .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
             .collect();
+
+        Bvh2d::build(objects)
+    }
+
+    fn setup_3d() -> Bvh3d<Bounds<3>> {
+        let objects: Vec<Bounds<3>> = (0..100)
+            .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
+            .collect();
+
+        Bvh3d::build(objects)
+    }
+
+    #[bench]
+    fn bvh_build_2d(b: &mut Bencher) {
+        let objects: Vec<Bounds<2>> = (0..100)
+            .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
+            .collect();
+
         b.iter(|| Bvh2d::build(objects.clone()));
     }
 
     #[bench]
-    fn bench_bvh_build_3d(b: &mut Bencher) {
+    fn bvh_build_3d(b: &mut Bencher) {
         let objects: Vec<Bounds<3>> = (0..100)
             .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
             .collect();
+
         b.iter(|| Bvh3d::build(objects.clone()));
     }
 
     #[bench]
-    fn bench_bvh_intersect_2d(b: &mut Bencher) {
-        let objects: Vec<Bounds<2>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
-            .collect();
-        let bvh = Bvh2d::build(objects);
+    fn bvh_iter_2d(b: &mut Bencher) {
+        let bvh = setup_2d();
+
+        b.iter(|| bvh.iter_objects().count());
+    }
+
+    #[bench]
+    fn bvh_iter_3d(b: &mut Bencher) {
+        let bvh = setup_3d();
+
+        b.iter(|| bvh.iter_objects().count());
+    }
+
+    #[bench]
+    fn bvh_query_ray_2d(b: &mut Bencher) {
+        let bvh = setup_2d();
+
         let r = ([-0.5, 49.5], [1.0, 0.0]).into();
+        b.iter(|| bvh.query_ray(&r).count());
+    }
+
+    #[bench]
+    fn bvh_query_ray_3d(b: &mut Bencher) {
+        let bvh = setup_3d();
+
+        let r = ([-0.5, 49.5, 49.5], [1.0, 0.0, 0.0]).into();
+        b.iter(|| bvh.query_ray(&r).count());
+    }
+
+    #[bench]
+    fn bvh_query_ray_exact_2d(b: &mut Bencher) {
+        let bvh = setup_2d();
+
+        let r = Ray::new([0.0, 0.5], [1.0, 0.0]);
         b.iter(|| {
             assert_eq!(
-                bvh.intersect(&r, f32::MIN, f32::MAX).unwrap().1,
-                &Bounds::new([49.0; 2], [50.0; 2])
+                bvh.query_ray_exact(&r, 0.0, f32::MAX).next().unwrap(),
+                (0.0, BvhIndex(0), &bvh.objects[0])
             )
         });
     }
 
     #[bench]
-    fn bench_bvh_intersect_3d(b: &mut Bencher) {
-        let objects: Vec<Bounds<3>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
-            .collect();
-        let bvh = Bvh3d::build(objects);
-        let r = ([-0.5, 49.5, 49.5], [1.0, 0.0, 0.0]).into();
+    fn bvh_query_ray_exact_3d(b: &mut Bencher) {
+        let bvh = setup_3d();
+
+        let r = Ray::new([0.0, 0.5, 0.5], [1.0, 0.0, 0.0]);
         b.iter(|| {
             assert_eq!(
-                bvh.intersect(&r, f32::MIN, f32::MAX).unwrap().1,
-                &Bounds::new([49.0; 3], [50.0; 3])
+                bvh.query_ray_exact(&r, 0.0, f32::MAX).next().unwrap(),
+                (0.0, BvhIndex(0), &bvh.objects[0])
             )
         });
     }
 
     #[bench]
-    fn bench_bvh_iter_2d(b: &mut Bencher) {
-        let objects: Vec<Bounds<2>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
-            .collect();
-        let bvh = Bvh2d::build(objects);
-        b.iter(|| bvh.iter_objects().map(|_| ()).count());
+    fn bvh_query_bounds_2d(b: &mut Bencher) {
+        let bvh = setup_2d();
+
+        let bb = Bounds::new([0.0, 49.5], [90.0, 50.0]);
+        b.iter(|| bvh.query_bounds(&bb).count());
     }
 
     #[bench]
-    fn bench_bvh_iter_3d(b: &mut Bencher) {
-        let objects: Vec<Bounds<3>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
-            .collect();
-        let bvh = Bvh3d::build(objects);
-        b.iter(|| bvh.iter_objects().map(|_| ()).count());
+    fn bvh_query_bounds_3d(b: &mut Bencher) {
+        let bvh = setup_3d();
+
+        let bb = Bounds::new([0.0, 49.5, 49.5], [90.0, 50.0, 50.0]);
+        b.iter(|| bvh.query_bounds(&bb).count());
     }
 
     #[bench]
-    fn bench_bvh_query_ray_2d(b: &mut Bencher) {
-        let objects: Vec<Bounds<2>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
-            .collect();
-        let bvh = Bvh2d::build(objects);
-        let r = ([-0.5, 49.5], [1.0, 0.0]).into();
-        b.iter(|| assert!(bvh.query_ray(&r).any(|(idx, _)| idx == BvhIndex(49))));
+    fn bvh_query_bounds_exact_2d(b: &mut Bencher) {
+        let bvh = setup_2d();
+
+        let bb = Bounds::new([0.0, 49.5], [90.0, 50.0]);
+        b.iter(|| {
+            assert_eq!(
+                bvh.query_bounds(&bb).next().unwrap(),
+                (BvhIndex(47), &bvh.objects[47])
+            )
+        });
     }
 
     #[bench]
-    fn bench_bvh_query_ray_3d(b: &mut Bencher) {
-        let objects: Vec<Bounds<3>> = (0..100)
-            .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
-            .collect();
-        let bvh = Bvh3d::build(objects);
-        let r = ([-0.5, 49.5, 49.5], [1.0, 0.0, 0.0]).into();
-        b.iter(|| assert!(bvh.query_ray(&r).any(|(idx, _)| idx == BvhIndex(49))));
+    fn bvh_query_bounds_exact_3d(b: &mut Bencher) {
+        let bvh = setup_3d();
+
+        let bb = Bounds::new([0.0, 49.5, 49.5], [90.0, 50.0, 50.0]);
+        b.iter(|| {
+            assert_eq!(
+                bvh.query_bounds(&bb).next().unwrap(),
+                (BvhIndex(47), &bvh.objects[47])
+            )
+        });
     }
 }
