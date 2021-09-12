@@ -35,7 +35,7 @@ pub struct Bvh<T: Bounded<D>, const D: usize, const N: usize> {
 impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     const STACK_SIZE: usize = 32;
 
-    pub fn build(objects: Vec<T>) -> Self {
+    pub fn build(mut objects: Vec<T>) -> Self {
         let centroids: Vec<_> = objects.iter().map(|obj| obj.bounds().centroid()).collect();
         let mut indexes = (0..objects.len()).collect::<Vec<_>>();
 
@@ -97,6 +97,33 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
                 }
             }
         }
+
+        let mut sorted_obj_ids = nodes
+            .iter()
+            .filter_map(|n| match n {
+                BvhNode::Node { .. } => None,
+                BvhNode::Leaf(obj_key) => Some(obj_key),
+            })
+            .enumerate()
+            .collect::<Vec<_>>();
+        sorted_obj_ids.sort_by_key(|v| v.1);
+
+        let mut tmp_objs = sorted_obj_ids
+            .iter()
+            .map(|v| v.0)
+            .zip(objects)
+            .collect::<Vec<_>>();
+        tmp_objs.sort_by_key(|v| v.0);
+
+        objects = tmp_objs.into_iter().map(|v| v.1).collect::<Vec<_>>();
+        nodes
+            .iter_mut()
+            .filter_map(|n| match n {
+                BvhNode::Node { .. } => None,
+                BvhNode::Leaf(ref mut obj_key) => Some(obj_key),
+            })
+            .enumerate()
+            .for_each(|(i, leaf)| leaf.0 = i);
 
         Self { objects, nodes }
     }
@@ -389,23 +416,23 @@ mod test {
     /// │╔══╤═╗ ╔══╤═╗
     /// │╟─┐└─╢ ╟─┐└─╢
     /// │╚═╧══╝ ╚═╧══╝
-    /// ┼──────────
+    /// ┼───────────────
     fn setup_2d() -> Bvh2d<Bounds<2>> {
         let objects = vec![
-            Bounds::new([0.0, 0.0], [1.0, 1.0]),
-            Bounds::new([1.0, 1.0], [2.0, 2.0]),
             Bounds::new([3.0, 0.0], [4.0, 1.0]),
+            Bounds::new([0.0, 0.0], [1.0, 1.0]),
             Bounds::new([4.0, 1.0], [5.0, 2.0]),
+            Bounds::new([1.0, 1.0], [2.0, 2.0]),
         ];
         Bvh2d::build(objects)
     }
 
     fn setup_3d() -> Bvh3d<Bounds<3>> {
         let objects = vec![
-            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
-            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]),
             Bounds::new([3.0, 0.0, 0.0], [4.0, 1.0, 1.0]),
+            Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
             Bounds::new([4.0, 1.0, 1.0], [5.0, 2.0, 2.0]),
+            Bounds::new([1.0, 1.0, 1.0], [2.0, 2.0, 2.0]),
         ];
         Bvh3d::build(objects)
     }
