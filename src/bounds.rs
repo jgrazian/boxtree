@@ -13,6 +13,12 @@ impl<const D: usize> Bounds<D> {
         Bounds { min, max }
     }
 
+    pub fn shape(&self) -> Vector<D> {
+        let mut shape = [0.0f32; D];
+        (0..D).for_each(|i| shape[i] = self.max[i] - self.min[i]);
+        shape
+    }
+
     pub fn axis_length(&self, axis: usize) -> f32 {
         self.max[axis] - self.min[axis]
     }

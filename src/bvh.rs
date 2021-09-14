@@ -5,151 +5,223 @@ use crate::iter::BvhLeafIterator;
 use crate::traits::*;
 use crate::{Ray, Vector};
 
-pub type Bvh2d<T> = Bvh<T, 2>;
-pub type Bvh3d<T> = Bvh<T, 3>;
+pub type Bvh2d<T> = Bvh<T, 2, 2>;
+pub type Bvh3d<T> = Bvh<T, 3, 2>;
+pub type WideBvh2d<T> = Bvh<T, 2, 4>;
+pub type WideBvh3d<T> = Bvh<T, 3, 4>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BvhIndex(usize);
+pub struct BvhObjKey(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BvhNodeKey(pub(crate) usize);
 
 /// A node in a D dimensional BVH.
 #[derive(Clone, Debug)]
-pub(crate) enum BvhNode<const D: usize> {
+pub(crate) enum BvhNode<const D: usize, const N: usize> {
     Node {
         bounds: Bounds<D>,
-        children: [Box<BvhNode<D>>; 2],
+        children: [Option<BvhNodeKey>; N],
     },
-    Leaf {
-        data: BvhIndex,
-    },
+    Leaf(BvhObjKey),
 }
 
 /// A D dimensional bounding volume hierarchy.
 #[derive(Clone, Debug)]
-pub struct Bvh<T: Bounded<D>, const D: usize> {
+pub struct Bvh<T: Bounded<D>, const D: usize, const N: usize> {
     objects: Vec<T>,
-    root: BvhNode<D>,
+    pub(crate) nodes: Vec<BvhNode<D, N>>,
 }
 
-impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
+impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     const STACK_SIZE: usize = 32;
 
     pub fn build(objects: Vec<T>) -> Self {
         let centroids: Vec<_> = objects.iter().map(|obj| obj.bounds().centroid()).collect();
-        let mut indexes: Vec<usize> = (0..objects.len()).collect();
+        let mut indexes = (0..objects.len()).collect::<Vec<_>>();
 
-        let root = Self::_build(&objects, &centroids, &mut indexes);
+        let mut nodes = Vec::with_capacity(Self::STACK_SIZE);
+        let mut stack: Vec<(Option<(BvhNodeKey, usize)>, &mut [usize])> =
+            vec![(None, &mut indexes)];
 
-        Self { objects, root }
-    }
+        while let Some((parent, idxs)) = stack.pop() {
+            match idxs.len() {
+                0 => (),
+                1 => match parent {
+                    None => nodes.push(BvhNode::Leaf(BvhObjKey(idxs[0]))),
+                    Some((parent_key, pos)) => {
+                        nodes.push(BvhNode::Leaf(BvhObjKey(idxs[0])));
+                        let leaf_id = BvhNodeKey(nodes.len() - 1);
 
-    fn _build(objects: &[T], centroids: &[Vector<D>], indexes: &mut [usize]) -> BvhNode<D> {
-        let bounds = indexes
-            .iter()
-            .map(|i| objects[*i].bounds())
-            .reduce(|acc, b| acc.union(&b))
-            .expect("No objects to build bounds.");
-
-        match indexes.len() {
-            0 => panic!("No objects given."),
-            1 => BvhNode::Leaf {
-                data: BvhIndex(indexes[0]),
-            },
-            2 => BvhNode::Node {
-                bounds,
-                children: [
-                    Box::new(BvhNode::Leaf {
-                        data: BvhIndex(indexes[0]),
-                    }),
-                    Box::new(BvhNode::Leaf {
-                        data: BvhIndex(indexes[1]),
-                    }),
-                ],
-            },
-            _ => {
-                const NUM_BUCKETS: usize = 16;
-                let mut cuts = [[0.0; NUM_BUCKETS]; D];
-                let mut split_idx = [[0 as usize; NUM_BUCKETS]; D];
-                let mut scores = [[0.0; NUM_BUCKETS]; D];
-                let bounds_sa = bounds.surface_area();
-
-                for axis in 0..D {
-                    // Sort objects by axis
-                    indexes.sort_unstable_by(|a, b| {
-                        let centroid1 = centroids[*a][axis];
-                        let centroid2 = centroids[*b][axis];
-                        centroid1.partial_cmp(&centroid2).unwrap()
-                    });
-
-                    for bucket in 0..NUM_BUCKETS {
-                        cuts[axis][bucket] = bounds.min[axis]
-                            + bounds.axis_length(axis)
-                                * ((bucket + 1) as f32 / (NUM_BUCKETS + 1) as f32);
-
-                        split_idx[axis][bucket] =
-                            indexes.partition_point(|o| centroids[*o][axis] < cuts[axis][bucket]);
-
-                        let (left, right) = indexes.split_at(split_idx[axis][bucket]);
-
-                        // Bad cut location one of the sides has no shapes.
-                        if left.len() == 0 || right.len() == 0 {
-                            scores[axis][bucket] = f32::INFINITY;
-                            continue;
-                        }
-
-                        let mut left_bounds = bounds.clone();
-                        left_bounds.max[axis] = cuts[axis][bucket];
-                        let mut right_bounds = bounds.clone();
-                        right_bounds.min[axis] = cuts[axis][bucket];
-
-                        let left_sa = left_bounds.surface_area();
-                        let right_sa = right_bounds.surface_area();
-
-                        let left_ratio = left_sa / bounds_sa;
-                        let right_ratio = right_sa / bounds_sa;
-
-                        scores[axis][bucket] =
-                            1.0 + left_ratio * left.len() as f32 + right_ratio * right.len() as f32;
-                    }
-                }
-
-                // Select minimum score
-                let mut min_score = f32::INFINITY;
-                let mut min_axis = 0;
-                let mut min_bucket = 0;
-                for axis in 0..D {
-                    for bucket in 0..NUM_BUCKETS {
-                        if scores[axis][bucket] < min_score {
-                            min_score = scores[axis][bucket];
-                            min_axis = axis;
-                            min_bucket = bucket;
+                        match nodes[parent_key.0] {
+                            BvhNode::Node {
+                                ref mut children, ..
+                            } => children[pos] = Some(leaf_id),
+                            _ => panic!("Expected node found leaf."),
                         }
                     }
-                }
+                },
+                _ => {
+                    let bounds = idxs
+                        .iter()
+                        .map(|i| objects[*i].bounds())
+                        .reduce(|acc, b| acc.union(&b))
+                        .expect("No objects to build bounds.");
 
-                // Decide where to split
-                let split_index = if min_score == f32::INFINITY {
-                    indexes.len() / 2 // Centroids are all very close just split in half
-                } else {
-                    indexes.sort_unstable_by(|a, b| {
-                        let centroid1 = centroids[*a][min_axis];
-                        let centroid2 = centroids[*b][min_axis];
-                        centroid1.partial_cmp(&centroid2).unwrap()
+                    nodes.push(BvhNode::Node {
+                        bounds,
+                        children: [None; N],
                     });
+                    let node_id = BvhNodeKey(nodes.len() - 1);
 
-                    split_idx[min_axis][min_bucket]
-                };
+                    match parent {
+                        None => (),
+                        Some((parent_key, pos)) => match nodes[parent_key.0] {
+                            BvhNode::Node {
+                                ref mut children, ..
+                            } => children[pos] = Some(node_id),
+                            _ => panic!("Expected node found leaf."),
+                        },
+                    }
 
-                let (mut left, mut right) = indexes.split_at_mut(split_index);
+                    let mut chunks = if N == 2 {
+                        Self::_split_sah(&bounds, &centroids, idxs)
+                    } else {
+                        Self::_split_chunks(&bounds, &centroids, idxs)
+                    };
 
-                let left_node = Self::_build(objects, centroids, &mut left);
-                let right_node = Self::_build(objects, centroids, &mut right);
-
-                BvhNode::Node {
-                    bounds,
-                    children: [Box::new(left_node), Box::new(right_node)],
+                    let num_chunks = chunks.iter().filter(|c| c.is_some()).count();
+                    for i in (0..num_chunks).rev() {
+                        let index_slice = std::mem::take(&mut chunks[i]).unwrap();
+                        stack.push((Some((node_id, i)), index_slice));
+                    }
                 }
             }
         }
+
+        Self { objects, nodes }
+    }
+
+    #[inline]
+    fn _split_sah(
+        bounds: &Bounds<D>,
+        centroids: &'a [Vector<D>],
+        indexes: &'a mut [usize],
+    ) -> [Option<&'a mut [usize]>; N] {
+        const NUM_BUCKETS: usize = 16;
+        let mut cuts = [[0.0; NUM_BUCKETS]; D];
+        let mut split_idx = [[0 as usize; NUM_BUCKETS]; D];
+        let mut scores = [[0.0; NUM_BUCKETS]; D];
+        let bounds_sa = bounds.surface_area();
+
+        for axis in 0..D {
+            // Sort objects by axis
+            indexes.sort_unstable_by(|a, b| {
+                let centroid1 = centroids[*a][axis];
+                let centroid2 = centroids[*b][axis];
+                centroid1.partial_cmp(&centroid2).unwrap()
+            });
+
+            for bucket in 0..NUM_BUCKETS {
+                cuts[axis][bucket] = bounds.min[axis]
+                    + bounds.axis_length(axis) * ((bucket + 1) as f32 / (NUM_BUCKETS + 1) as f32);
+
+                split_idx[axis][bucket] =
+                    indexes.partition_point(|o| centroids[*o][axis] < cuts[axis][bucket]);
+
+                let (left, right) = indexes.split_at(split_idx[axis][bucket]);
+
+                // Bad cut location one of the sides has no shapes.
+                if left.len() == 0 || right.len() == 0 {
+                    scores[axis][bucket] = f32::INFINITY;
+                    continue;
+                }
+
+                let mut left_bounds = bounds.clone();
+                left_bounds.max[axis] = cuts[axis][bucket];
+                let mut right_bounds = bounds.clone();
+                right_bounds.min[axis] = cuts[axis][bucket];
+
+                let left_sa = left_bounds.surface_area();
+                let right_sa = right_bounds.surface_area();
+
+                let left_ratio = left_sa / bounds_sa;
+                let right_ratio = right_sa / bounds_sa;
+
+                scores[axis][bucket] =
+                    1.0 + left_ratio * left.len() as f32 + right_ratio * right.len() as f32;
+            }
+        }
+
+        // Select minimum score
+        let mut min_score = f32::INFINITY;
+        let mut min_axis = 0;
+        let mut min_bucket = 0;
+        for axis in 0..D {
+            for bucket in 0..NUM_BUCKETS {
+                if scores[axis][bucket] < min_score {
+                    min_score = scores[axis][bucket];
+                    min_axis = axis;
+                    min_bucket = bucket;
+                }
+            }
+        }
+
+        // Decide where to split
+        let split_index = if min_score == f32::INFINITY {
+            // Centroids are all very close just split in half
+            indexes.len() / 2
+        } else {
+            indexes.sort_unstable_by(|a, b| {
+                let centroid1 = centroids[*a][min_axis];
+                let centroid2 = centroids[*b][min_axis];
+                centroid1.partial_cmp(&centroid2).unwrap()
+            });
+
+            split_idx[min_axis][min_bucket]
+        };
+
+        let (left, right) = indexes.split_at_mut(split_index);
+
+        const TEMP: Option<&mut [usize]> = None;
+        let mut out = [TEMP; N];
+        out[0] = Some(left);
+        out[1] = Some(right);
+        out
+    }
+
+    #[inline]
+    fn _split_chunks(
+        bounds: &Bounds<D>,
+        centroids: &'a [Vector<D>],
+        indexes: &'a mut [usize],
+    ) -> [Option<&'a mut [usize]>; N] {
+        let longest_axis_idx = bounds
+            .shape()
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+
+        indexes.sort_unstable_by(|a, b| {
+            let centroid1 = centroids[*a][longest_axis_idx];
+            let centroid2 = centroids[*b][longest_axis_idx];
+            centroid1.partial_cmp(&centroid2).unwrap()
+        });
+
+        let chunk_size = match indexes.len() {
+            n if n <= N => 1,
+            n if n <= (N * N) => N,
+            n => (n + (N - 1)) / N,
+        };
+
+        const TEMP: Option<&mut [usize]> = None;
+        let mut out = [TEMP; N];
+        indexes
+            .chunks_mut(chunk_size)
+            .zip(out.iter_mut())
+            .for_each(|(chunk, out_chunk)| *out_chunk = Some(chunk));
+        out
     }
 
     pub fn query_ray(
@@ -157,11 +229,11 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
         ray: &'a Ray<D>,
         t_min: f32,
         t_max: f32,
-    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds: &Bounds<D>| bounds.ray_hit(&ray, t_min, t_max).is_some();
 
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.root);
+        stack.push(&self.nodes[0]);
 
         BvhLeafIterator {
             bvh: self,
@@ -173,11 +245,11 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
     pub fn query_bounds(
         &'a self,
         bounds: &'a Bounds<D>,
-    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds2: &Bounds<D>| bounds.bounds_hit(&bounds2);
 
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.root);
+        stack.push(&self.nodes[0]);
 
         BvhLeafIterator {
             bvh: self,
@@ -189,11 +261,11 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
     pub fn query_point(
         &'a self,
         point: &'a Vector<D>,
-    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds: &Bounds<D>| bounds.point_hit(&point);
 
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.root);
+        stack.push(&self.nodes[0]);
 
         BvhLeafIterator {
             bvh: self,
@@ -202,9 +274,9 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
         }
     }
 
-    pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.root);
+        stack.push(&self.nodes[0]);
 
         BvhLeafIterator {
             bvh: self,
@@ -214,13 +286,13 @@ impl<'a, T: Bounded<D>, const D: usize> Bvh<T, D> {
     }
 }
 
-impl<'a, T: RayHittable<D>, const D: usize> Bvh<T, D> {
+impl<'a, T: RayHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     pub fn query_ray_exact(
         &'a self,
         ray: &'a Ray<D>,
         t_min: f32,
         t_max: f32,
-    ) -> impl Iterator<Item = (f32, BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (f32, BvhObjKey, &T)> + '_ {
         self.query_ray(ray, t_min, t_max)
             .filter_map(move |(idx, obj)| match obj.ray_hit(ray, t_min, t_max) {
                 None => None,
@@ -229,57 +301,57 @@ impl<'a, T: RayHittable<D>, const D: usize> Bvh<T, D> {
     }
 }
 
-impl<'a, T: BoundsHittable<D>, const D: usize> Bvh<T, D> {
+impl<'a, T: BoundsHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     pub fn query_bounds_exact(
         &'a self,
         bounds: &'a Bounds<D>,
-    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         self.query_bounds(bounds)
             .filter(move |(_, obj)| obj.bounds_hit(bounds))
     }
 }
 
-impl<'a, T: PointHittable<D>, const D: usize> Bvh<T, D> {
+impl<'a, T: PointHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     pub fn query_point_exact(
         &'a self,
         point: &'a Vector<D>,
-    ) -> impl Iterator<Item = (BvhIndex, &T)> + '_ {
+    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         self.query_point(point)
             .filter(move |(_, obj)| obj.point_hit(point))
     }
 }
 
-impl<T: Bounded<D>, const D: usize> Index<BvhIndex> for Bvh<T, D> {
+impl<T: Bounded<D>, const D: usize, const N: usize> Index<BvhObjKey> for Bvh<T, D, N> {
     type Output = T;
 
-    fn index(&self, index: BvhIndex) -> &Self::Output {
+    fn index(&self, index: BvhObjKey) -> &Self::Output {
         &self.objects[index.0]
     }
 }
 
-impl<T: Bounded<D>, const D: usize> Index<&BvhIndex> for Bvh<T, D> {
+impl<T: Bounded<D>, const D: usize, const N: usize> Index<&BvhObjKey> for Bvh<T, D, N> {
     type Output = T;
 
-    fn index(&self, index: &BvhIndex) -> &Self::Output {
+    fn index(&self, index: &BvhObjKey) -> &Self::Output {
         &self.objects[index.0]
     }
 }
 
-impl<T: Bounded<D>, const D: usize> Bounded<D> for Bvh<T, D> {
+impl<T: Bounded<D>, const D: usize, const N: usize> Bounded<D> for Bvh<T, D, N> {
     type Bound = T;
 
     fn bounds(&self) -> Bounds<D> {
-        match self.root {
+        match self.nodes[0] {
             BvhNode::Node { bounds, .. } => bounds,
-            BvhNode::Leaf { data } => self[data].bounds(),
+            BvhNode::Leaf(obj_key) => self[obj_key].bounds(),
         }
     }
 }
 
-impl<T: RayHittable<D>, const D: usize> RayHittable<D> for Bvh<T, D> {
+impl<T: RayHittable<D>, const D: usize, const N: usize> RayHittable<D> for Bvh<T, D, N> {
     fn ray_hit(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &T)> {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.root);
+        stack.push(&self.nodes[0]);
         let mut result = None;
 
         while let Some(node) = stack.pop() {
@@ -287,12 +359,16 @@ impl<T: RayHittable<D>, const D: usize> RayHittable<D> for Bvh<T, D> {
             match node {
                 BvhNode::Node { bounds, children } => {
                     if bounds.ray_hit(ray, t_min, t_max).is_some() {
-                        stack.push(&children[1]);
-                        stack.push(&children[0]);
+                        for child_key in children.iter().rev() {
+                            match child_key {
+                                Some(key) => stack.push(&self.nodes[key.0]),
+                                None => (),
+                            }
+                        }
                     }
                 }
-                BvhNode::Leaf { data, .. } => {
-                    let obj = &self[data];
+                BvhNode::Leaf(obj_key) => {
+                    let obj = &self[obj_key];
                     match obj.ray_hit(ray, t_min, t_max) {
                         None => (),
                         Some((t, _)) => {
@@ -370,8 +446,8 @@ mod test {
 
         let r = Ray::new([1.0, 0.0], [0.0, 1.0]);
         let mut ray_hits = bvh.query_ray(&r, 0.0, f32::INFINITY);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -381,8 +457,8 @@ mod test {
 
         let r = Ray::new([1.0, 1.0, 0.0], [0.0, 0.0, 1.0]);
         let mut ray_hits = bvh.query_ray(&r, 0.0, f32::INFINITY);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -394,11 +470,11 @@ mod test {
         let mut ray_hits = bvh.query_ray_exact(&r, 0.0, f32::MAX);
         assert_eq!(
             ray_hits.next().unwrap(),
-            (0.0, BvhIndex(0), &bvh.objects[0])
+            (0.0, BvhObjKey(0), &bvh.objects[0])
         );
         assert_eq!(
             ray_hits.next().unwrap(),
-            (3.0, BvhIndex(2), &bvh.objects[2])
+            (3.0, BvhObjKey(2), &bvh.objects[2])
         );
         assert!(ray_hits.next().is_none());
     }
@@ -411,11 +487,11 @@ mod test {
         let mut ray_hits = bvh.query_ray_exact(&r, 0.0, f32::MAX);
         assert_eq!(
             ray_hits.next().unwrap(),
-            (0.0, BvhIndex(0), &bvh.objects[0])
+            (0.0, BvhObjKey(0), &bvh.objects[0])
         );
         assert_eq!(
             ray_hits.next().unwrap(),
-            (3.0, BvhIndex(2), &bvh.objects[2])
+            (3.0, BvhObjKey(2), &bvh.objects[2])
         );
         assert!(ray_hits.next().is_none());
     }
@@ -426,8 +502,8 @@ mod test {
 
         let b = Bounds::new([0.0, 0.0], [1.0, 1.0]);
         let mut ray_hits = bvh.query_bounds(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -437,8 +513,8 @@ mod test {
 
         let b = Bounds::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let mut ray_hits = bvh.query_bounds(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -448,8 +524,8 @@ mod test {
 
         let b = Bounds::new([0.0, 0.0], [5.0, 0.5]);
         let mut ray_hits = bvh.query_bounds_exact(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(2), &bvh.objects[2]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(2), &bvh.objects[2]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -459,8 +535,8 @@ mod test {
 
         let b = Bounds::new([0.0, 0.0, 0.0], [5.0, 0.5, 0.5]);
         let mut ray_hits = bvh.query_bounds_exact(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(2), &bvh.objects[2]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(2), &bvh.objects[2]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -470,8 +546,8 @@ mod test {
 
         let b = [0.5, 0.5];
         let mut ray_hits = bvh.query_point(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -481,8 +557,8 @@ mod test {
 
         let b = [0.5, 0.5, 0.5];
         let mut ray_hits = bvh.query_point(&b);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(1), &bvh.objects[1]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(1), &bvh.objects[1]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -492,7 +568,7 @@ mod test {
 
         let p = [0.5, 0.5];
         let mut ray_hits = bvh.query_point_exact(&p);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
         assert!(ray_hits.next().is_none());
     }
 
@@ -502,7 +578,7 @@ mod test {
 
         let p = [0.5, 0.5, 0.5];
         let mut ray_hits = bvh.query_point_exact(&p);
-        assert_eq!(ray_hits.next().unwrap(), (BvhIndex(0), &bvh.objects[0]));
+        assert_eq!(ray_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
         assert!(ray_hits.next().is_none());
     }
 }
