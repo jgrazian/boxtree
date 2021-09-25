@@ -1,7 +1,6 @@
 use crate::traits::*;
 use crate::{Ray2, Ray3, Ray3A, Vec2, Vec3, Vec3A};
 
-/// A bounding box in D dimensional space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bounds2 {
     pub min: Vec2,
@@ -21,7 +20,7 @@ pub struct Bounds3A {
 }
 
 macro_rules! impl_bounds {
-    ($dim:tt, $bounds:ty, $ray:ty, $vec:ty) => {
+    ($dim:tt, $bounds:ty, $ray:ty, $vec:ty, $bounded:ty, $rh:ty, $bh:ty, $ph:ty) => {
         impl $bounds {
             const DIM: usize = $dim;
 
@@ -73,16 +72,14 @@ macro_rules! impl_bounds {
             }
         }
 
-        impl Bounded<$vec> for $bounds {
-            type Item = Self;
-            type Bounds = Self;
-
-            fn bounds(&self) -> Self::Bounds {
+        impl $bounded for $bounds {
+            fn bounds(&self) -> Self {
                 *self
             }
         }
 
-        impl RayHittable<$vec, $ray> for $bounds {
+        impl $rh for $bounds {
+            type Item = $bounds;
             fn ray_hit(&self, ray: &$ray, t_min: f32, t_max: f32) -> Option<(f32, &Self::Item)> {
                 let mut loc_t_min = t_min;
                 let mut loc_t_max = t_max;
@@ -104,19 +101,18 @@ macro_rules! impl_bounds {
                 match (loc_t_min < 0.0, loc_t_max < 0.0) {
                     (true, true) => None,
                     (true, false) => Some((loc_t_max, &self)),
-                    (false, true) => Some((loc_t_min, &self)),
-                    (false, false) => Some((loc_t_min, &self)),
+                    (false, _) => Some((loc_t_min, &self)),
                 }
             }
         }
 
-        impl BoundsHittable<$vec> for $bounds {
-            fn bounds_hit(&self, bounds: &Self::Bounds) -> bool {
+        impl $bh for $bounds {
+            fn bounds_hit(&self, bounds: &Self) -> bool {
                 (self.min.cmple(bounds.max) & self.max.cmpge(bounds.min)).all()
             }
         }
 
-        impl PointHittable<$vec> for $bounds {
+        impl $ph for $bounds {
             fn point_hit(&self, point: &$vec) -> bool {
                 (self.min.cmple(*point) & self.max.cmpge(*point)).all()
             }
@@ -124,9 +120,18 @@ macro_rules! impl_bounds {
     };
 }
 
-impl_bounds!(2, Bounds2, Ray2, Vec2);
-impl_bounds!(3, Bounds3, Ray3, Vec3);
-impl_bounds!(3, Bounds3A, Ray3A, Vec3A);
+impl_bounds!(2, Bounds2, Ray2, Vec2, Bounded2, Ray2Hit, Bounds2Hit, Point2Hit);
+impl_bounds!(3, Bounds3, Ray3, Vec3, Bounded3, Ray3Hit, Bounds3Hit, Point3Hit);
+impl_bounds!(
+    3,
+    Bounds3A,
+    Ray3A,
+    Vec3A,
+    Bounded3A,
+    Ray3AHit,
+    Bounds3AHit,
+    Point3AHit
+);
 
 #[cfg(test)]
 mod test {

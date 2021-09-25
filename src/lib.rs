@@ -1,10 +1,10 @@
 mod bounds;
 mod bvh;
-// mod iter;
+mod iter;
 mod traits;
 
 pub use bounds::*;
-// pub use bvh::{Bvh, Bvh2d, Bvh3d};
+pub use bvh::{Bvh2, Bvh3, Bvh3A};
 pub use traits::*;
 
 pub use glam::{Vec2, Vec3, Vec3A};

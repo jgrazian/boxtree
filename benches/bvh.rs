@@ -2,35 +2,35 @@ use criterion::black_box;
 use criterion::*;
 use rust_bvh::*;
 
-fn setup_2d() -> Bvh2d<Bounds<2>> {
-    let objects: Vec<Bounds<2>> = (0..1000)
-        .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
+fn setup_2d() -> Bvh2<Bounds2, 2> {
+    let objects: Vec<Bounds2> = (0..1000)
+        .map(|i| ([i as f32; 2], [(i + 1) as f32; 2]).into())
         .collect();
 
-    Bvh2d::build(objects)
+    Bvh2::build(objects)
 }
 
-fn setup_3d() -> Bvh3d<Bounds<3>> {
-    let objects: Vec<Bounds<3>> = (0..1000)
-        .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
+fn setup_3d() -> Bvh3A<Bounds3A, 2> {
+    let objects: Vec<Bounds3A> = (0..1000)
+        .map(|i| ([i as f32; 3], [(i + 1) as f32; 3]).into())
         .collect();
 
-    Bvh3d::build(objects)
+    Bvh3A::build(objects)
 }
 
 fn bvh_build(c: &mut Criterion) {
-    let objects_2d: Vec<Bounds<2>> = (0..1000)
-        .map(|i| Bounds::new([i as f32; 2], [(i + 1) as f32; 2]))
+    let objects_2d: Vec<Bounds2> = (0..1000)
+        .map(|i| ([i as f32; 2], [(i + 1) as f32; 2]).into())
         .collect();
-    let objects_3d: Vec<Bounds<3>> = (0..1000)
-        .map(|i| Bounds::new([i as f32; 3], [(i + 1) as f32; 3]))
+    let objects_3d: Vec<Bounds3A> = (0..1000)
+        .map(|i| ([i as f32; 3], [(i + 1) as f32; 3]).into())
         .collect();
 
     c.bench_function("Bvh2d build", move |b| {
         // This will avoid timing the to_vec call.
         b.iter_batched(
             || objects_2d.clone(),
-            |data| Bvh2d::build(data),
+            |data| Bvh2::<_, 2>::build(data),
             BatchSize::SmallInput,
         )
     });
@@ -39,7 +39,7 @@ fn bvh_build(c: &mut Criterion) {
         // This will avoid timing the to_vec call.
         b.iter_batched(
             || objects_3d.clone(),
-            |data| Bvh3d::build(data),
+            |data| Bvh3A::<_, 2>::build(data),
             BatchSize::SmallInput,
         )
     });
@@ -102,8 +102,8 @@ fn bvh_ray(c: &mut Criterion) {
 fn bvh_bounds(c: &mut Criterion) {
     let bvh2d = setup_2d();
     let bvh3d = setup_3d();
-    let b2d = Bounds::new([0.0; 2], [100.0; 2]);
-    let b3d = Bounds::new([0.0; 3], [100.0; 3]);
+    let b2d = ([0.0; 2], [100.0; 2]).into();
+    let b3d = ([0.0; 3], [100.0; 3]).into();
 
     c.bench_function("Bvh2d query_bounds", move |b| {
         b.iter(|| bvh2d.query_bounds(&b2d).map(|obj| black_box(obj)));
@@ -114,8 +114,8 @@ fn bvh_bounds(c: &mut Criterion) {
 
     let bvh2d = setup_2d();
     let bvh3d = setup_3d();
-    let b2d = Bounds::new([0.0; 2], [100.0; 2]);
-    let b3d = Bounds::new([0.0; 3], [100.0; 3]);
+    let b2d = ([0.0; 2], [100.0; 2]).into();
+    let b3d = ([0.0; 3], [100.0; 3]).into();
 
     c.bench_function("Bvh2d query_bounds_exact", move |b| {
         b.iter(|| bvh2d.query_bounds_exact(&b2d).map(|obj| black_box(obj)));
@@ -128,8 +128,8 @@ fn bvh_bounds(c: &mut Criterion) {
 fn bvh_point(c: &mut Criterion) {
     let bvh2d = setup_2d();
     let bvh3d = setup_3d();
-    let p2d = [100.5; 2];
-    let p3d = [100.5; 3];
+    let p2d = [100.5; 2].into();
+    let p3d = [100.5; 3].into();
 
     c.bench_function("Bvh2d query_point", move |b| {
         b.iter(|| bvh2d.query_point(&p2d).map(|obj| black_box(obj)));
@@ -140,8 +140,8 @@ fn bvh_point(c: &mut Criterion) {
 
     let bvh2d = setup_2d();
     let bvh3d = setup_3d();
-    let p2d = [100.5; 2];
-    let p3d = [100.5; 3];
+    let p2d = [100.5; 2].into();
+    let p3d = [100.5; 3].into();
 
     c.bench_function("Bvh2d query_point_exact", move |b| {
         b.iter(|| bvh2d.query_point_exact(&p2d).map(|obj| black_box(obj)));
