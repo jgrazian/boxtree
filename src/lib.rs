@@ -1,31 +1,56 @@
 mod bounds;
 mod bvh;
-mod iter;
+// mod iter;
 mod traits;
 
-pub use bounds::Bounds;
-pub use bvh::{Bvh, Bvh2d, Bvh3d};
+pub use bounds::*;
+// pub use bvh::{Bvh, Bvh2d, Bvh3d};
 pub use traits::*;
 
-/// A D dimensional vector.
-type Vector<const D: usize> = [f32; D];
+pub use glam::{Vec2, Vec3, Vec3A};
 
-/// A ray in D dimensional space.
-/// Starts at `origin` and goes in the direction `direction`.
 #[derive(Clone, Copy, Debug)]
-pub struct Ray<const D: usize> {
-    origin: Vector<D>,
-    direction: Vector<D>,
+pub struct Ray2 {
+    origin: Vec2,
+    direction: Vec2,
 }
 
-impl<const D: usize> Ray<D> {
-    fn new(origin: Vector<D>, direction: Vector<D>) -> Self {
-        Self { origin, direction }
-    }
+#[derive(Clone, Copy, Debug)]
+pub struct Ray3 {
+    origin: Vec3,
+    direction: Vec3,
 }
 
-impl<const D: usize> From<(Vector<D>, Vector<D>)> for Ray<D> {
-    fn from(tuple: (Vector<D>, Vector<D>)) -> Self {
-        Self::new(tuple.0, tuple.1)
-    }
+#[derive(Clone, Copy, Debug)]
+pub struct Ray3A {
+    origin: Vec3A,
+    direction: Vec3A,
 }
+
+macro_rules! impl_ray {
+    ($dim:tt, $ray:ty, $vec:ty) => {
+        impl $ray {
+            fn new(origin: $vec, direction: $vec) -> Self {
+                Self { origin, direction }
+            }
+
+            pub fn at(&self, t: f32) -> $vec {
+                self.origin + self.direction * t
+            }
+        }
+        impl From<($vec, $vec)> for $ray {
+            fn from(tuple: ($vec, $vec)) -> Self {
+                Self::new(tuple.0, tuple.1)
+            }
+        }
+        impl From<([f32; $dim], [f32; $dim])> for $ray {
+            fn from(tuple: ([f32; $dim], [f32; $dim])) -> Self {
+                Self::new(tuple.0.into(), tuple.1.into())
+            }
+        }
+    };
+}
+
+impl_ray!(2, Ray2, Vec2);
+impl_ray!(3, Ray3, Vec3);
+impl_ray!(3, Ray3A, Vec3A);

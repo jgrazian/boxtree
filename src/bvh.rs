@@ -1,25 +1,43 @@
 use std::ops::Index;
 
-use crate::bounds::Bounds;
-use crate::iter::BvhLeafIterator;
+use crate::bounds::{Bounds2, Bounds3, Bounds3A};
+// use crate::iter::BvhLeafIterator;
 use crate::traits::*;
-use crate::{Ray, Vector};
+use crate::{Ray2, Ray3, Ray3A, Vec2, Vec3, Vec3A};
 
-pub type Bvh2d<T> = Bvh<T, 2, 2>;
-pub type Bvh3d<T> = Bvh<T, 3, 2>;
-pub type WideBvh2d<T> = Bvh<T, 2, 4>;
-pub type WideBvh3d<T> = Bvh<T, 3, 4>;
+// pub type Bvh2d<T> = Bvh<T, 2, 2>;
+// pub type Bvh3d<T> = Bvh<T, 3, 2>;
+// pub type WideBvh2d<T> = Bvh<T, 2, 4>;
+// pub type WideBvh3d<T> = Bvh<T, 3, 4>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhObjKey(usize);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhNodeKey(pub(crate) usize);
 
-/// A node in a D dimensional BVH.
 #[derive(Clone, Debug)]
-pub(crate) enum BvhNode<const D: usize, const N: usize> {
+pub(crate) enum BvhNode2<const N: usize> {
     Node {
-        bounds: Bounds<D>,
+        bounds: Bounds2,
+        children: [Option<BvhNodeKey>; N],
+    },
+    Leaf(BvhObjKey),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum BvhNode3<const N: usize> {
+    Node {
+        bounds: Bounds3,
+        children: [Option<BvhNodeKey>; N],
+    },
+    Leaf(BvhObjKey),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum BvhNode3A<const N: usize> {
+    Node {
+        bounds: Bounds3A,
         children: [Option<BvhNodeKey>; N],
     },
     Leaf(BvhObjKey),
@@ -27,12 +45,12 @@ pub(crate) enum BvhNode<const D: usize, const N: usize> {
 
 /// A D dimensional bounding volume hierarchy.
 #[derive(Clone, Debug)]
-pub struct Bvh<T: Bounded<D>, const D: usize, const N: usize> {
+pub struct Bvh2<T: Bounded<Vec2>, const N: usize> {
     objects: Vec<T>,
-    pub(crate) nodes: Vec<BvhNode<D, N>>,
+    pub(crate) nodes: Vec<BvhNode2<N>>,
 }
 
-impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
+impl<'a, T: Bounded<Vec2>, const N: usize> Bvh2<T, N> {
     const STACK_SIZE: usize = 32;
 
     pub fn build(mut objects: Vec<T>) -> Self {
@@ -47,13 +65,13 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
             match idxs.len() {
                 0 => (),
                 1 => match parent {
-                    None => nodes.push(BvhNode::Leaf(BvhObjKey(idxs[0]))),
+                    None => nodes.push(BvhNode2::Leaf(BvhObjKey(idxs[0]))),
                     Some((parent_key, pos)) => {
-                        nodes.push(BvhNode::Leaf(BvhObjKey(idxs[0])));
+                        nodes.push(BvhNode2::Leaf(BvhObjKey(idxs[0])));
                         let leaf_id = BvhNodeKey(nodes.len() - 1);
 
                         match nodes[parent_key.0] {
-                            BvhNode::Node {
+                            BvhNode2::Node {
                                 ref mut children, ..
                             } => children[pos] = Some(leaf_id),
                             _ => panic!("Expected node found leaf."),
@@ -67,7 +85,7 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
                         .reduce(|acc, b| acc.union(&b))
                         .expect("No objects to build bounds.");
 
-                    nodes.push(BvhNode::Node {
+                    nodes.push(BvhNode2::Node {
                         bounds,
                         children: [None; N],
                     });
@@ -76,7 +94,7 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
                     match parent {
                         None => (),
                         Some((parent_key, pos)) => match nodes[parent_key.0] {
-                            BvhNode::Node {
+                            BvhNode2::Node {
                                 ref mut children, ..
                             } => children[pos] = Some(node_id),
                             _ => panic!("Expected node found leaf."),
@@ -101,8 +119,8 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
         let mut sorted_obj_ids = nodes
             .iter()
             .filter_map(|n| match n {
-                BvhNode::Node { .. } => None,
-                BvhNode::Leaf(obj_key) => Some(obj_key),
+                BvhNode2::Node { .. } => None,
+                BvhNode2::Leaf(obj_key) => Some(obj_key),
             })
             .enumerate()
             .collect::<Vec<_>>();
@@ -119,8 +137,8 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
         nodes
             .iter_mut()
             .filter_map(|n| match n {
-                BvhNode::Node { .. } => None,
-                BvhNode::Leaf(ref mut obj_key) => Some(obj_key),
+                BvhNode2::Node { .. } => None,
+                BvhNode2::Leaf(ref mut obj_key) => Some(obj_key),
             })
             .enumerate()
             .for_each(|(i, leaf)| leaf.0 = i);
@@ -130,17 +148,17 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
 
     #[inline]
     fn _split_sah(
-        bounds: &Bounds<D>,
-        centroids: &'a [Vector<D>],
+        bounds: &Bounds2,
+        centroids: &'a [Vec2],
         indexes: &'a mut [usize],
     ) -> [Option<&'a mut [usize]>; N] {
         const NUM_BUCKETS: usize = 16;
-        let mut cuts = [[0.0; NUM_BUCKETS]; D];
-        let mut split_idx = [[0 as usize; NUM_BUCKETS]; D];
-        let mut scores = [[0.0; NUM_BUCKETS]; D];
+        let mut cuts = [[0.0; NUM_BUCKETS]; Bounds2::DIM];
+        let mut split_idx = [[0 as usize; NUM_BUCKETS]; Bounds2::DIM];
+        let mut scores = [[0.0; NUM_BUCKETS]; Bounds2::DIM];
         let bounds_sa = bounds.surface_area();
 
-        for axis in 0..D {
+        for axis in 0..Bounds2::DIM {
             // Sort objects by axis
             indexes.sort_unstable_by(|a, b| {
                 let centroid1 = centroids[*a][axis];
@@ -183,7 +201,7 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
         let mut min_score = f32::INFINITY;
         let mut min_axis = 0;
         let mut min_bucket = 0;
-        for axis in 0..D {
+        for axis in 0..Bounds2::DIM {
             for bucket in 0..NUM_BUCKETS {
                 if scores[axis][bucket] < min_score {
                     min_score = scores[axis][bucket];
@@ -218,8 +236,8 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
 
     #[inline]
     fn _split_chunks(
-        bounds: &Bounds<D>,
-        centroids: &'a [Vector<D>],
+        bounds: &Bounds2,
+        centroids: &'a [Vec2],
         indexes: &'a mut [usize],
     ) -> [Option<&'a mut [usize]>; N] {
         let longest_axis_idx = bounds
@@ -251,72 +269,72 @@ impl<'a, T: Bounded<D>, const D: usize, const N: usize> Bvh<T, D, N> {
         out
     }
 
-    pub fn query_ray(
-        &'a self,
-        ray: &'a Ray<D>,
-        t_min: f32,
-        t_max: f32,
-    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
-        let predicate = move |bounds: &Bounds<D>| bounds.ray_hit(&ray, t_min, t_max).is_some();
+    // pub fn query_ray(
+    //     &'a self,
+    //     ray: &'a Ray2,
+    //     t_min: f32,
+    //     t_max: f32,
+    // ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
+    //     let predicate = move |bounds: &Bounds2| bounds.ray_hit(&ray, t_min, t_max).is_some();
 
-        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.nodes[0]);
+    //     let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+    //     stack.push(&self.nodes[0]);
 
-        BvhLeafIterator {
-            bvh: self,
-            predicate,
-            stack,
-        }
-    }
+    //     BvhLeafIterator {
+    //         bvh: self,
+    //         predicate,
+    //         stack,
+    //     }
+    // }
 
-    pub fn query_bounds(
-        &'a self,
-        bounds: &'a Bounds<D>,
-    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
-        let predicate = move |bounds2: &Bounds<D>| bounds.bounds_hit(&bounds2);
+    // pub fn query_bounds(
+    //     &'a self,
+    //     bounds: &'a Bounds<D>,
+    // ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
+    //     let predicate = move |bounds2: &Bounds<D>| bounds.bounds_hit(&bounds2);
 
-        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.nodes[0]);
+    //     let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+    //     stack.push(&self.nodes[0]);
 
-        BvhLeafIterator {
-            bvh: self,
-            predicate,
-            stack,
-        }
-    }
+    //     BvhLeafIterator {
+    //         bvh: self,
+    //         predicate,
+    //         stack,
+    //     }
+    // }
 
-    pub fn query_point(
-        &'a self,
-        point: &'a Vector<D>,
-    ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
-        let predicate = move |bounds: &Bounds<D>| bounds.point_hit(&point);
+    // pub fn query_point(
+    //     &'a self,
+    //     point: &'a Vector<D>,
+    // ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
+    //     let predicate = move |bounds: &Bounds<D>| bounds.point_hit(&point);
 
-        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.nodes[0]);
+    //     let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+    //     stack.push(&self.nodes[0]);
 
-        BvhLeafIterator {
-            bvh: self,
-            predicate,
-            stack,
-        }
-    }
+    //     BvhLeafIterator {
+    //         bvh: self,
+    //         predicate,
+    //         stack,
+    //     }
+    // }
 
-    pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
-        let mut stack = Vec::with_capacity(Self::STACK_SIZE);
-        stack.push(&self.nodes[0]);
+    // pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
+    //     let mut stack = Vec::with_capacity(Self::STACK_SIZE);
+    //     stack.push(&self.nodes[0]);
 
-        BvhLeafIterator {
-            bvh: self,
-            predicate: |_| true,
-            stack,
-        }
-    }
+    //     BvhLeafIterator {
+    //         bvh: self,
+    //         predicate: |_| true,
+    //         stack,
+    //     }
+    // }
 }
 
-impl<'a, T: RayHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
+impl<'a, T: RayHittable<Vec2, Ray2>, const N: usize> Bvh2<T, N> {
     pub fn query_ray_exact(
         &'a self,
-        ray: &'a Ray<D>,
+        ray: &'a Ray2,
         t_min: f32,
         t_max: f32,
     ) -> impl Iterator<Item = (f32, BvhObjKey, &T)> + '_ {
@@ -328,27 +346,27 @@ impl<'a, T: RayHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
     }
 }
 
-impl<'a, T: BoundsHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
+impl<'a, T: BoundsHittable<Vec2>, const N: usize> Bvh2<T, N> {
     pub fn query_bounds_exact(
         &'a self,
-        bounds: &'a Bounds<D>,
+        bounds: &'a Bounds2,
     ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         self.query_bounds(bounds)
             .filter(move |(_, obj)| obj.bounds_hit(bounds))
     }
 }
 
-impl<'a, T: PointHittable<D>, const D: usize, const N: usize> Bvh<T, D, N> {
+impl<'a, T: PointHittable<Vec2>, const N: usize> Bvh2<T, N> {
     pub fn query_point_exact(
         &'a self,
-        point: &'a Vector<D>,
+        point: &'a Vec2,
     ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         self.query_point(point)
             .filter(move |(_, obj)| obj.point_hit(point))
     }
 }
 
-impl<T: Bounded<D>, const D: usize, const N: usize> Index<BvhObjKey> for Bvh<T, D, N> {
+impl<T: Bounded<Vec2>, const N: usize> Index<BvhObjKey> for Bvh2<T, N> {
     type Output = T;
 
     fn index(&self, index: BvhObjKey) -> &Self::Output {
@@ -356,7 +374,7 @@ impl<T: Bounded<D>, const D: usize, const N: usize> Index<BvhObjKey> for Bvh<T, 
     }
 }
 
-impl<T: Bounded<D>, const D: usize, const N: usize> Index<&BvhObjKey> for Bvh<T, D, N> {
+impl<T: Bounded<Vec2>, const N: usize> Index<&BvhObjKey> for Bvh2<T, N> {
     type Output = T;
 
     fn index(&self, index: &BvhObjKey) -> &Self::Output {
@@ -364,19 +382,20 @@ impl<T: Bounded<D>, const D: usize, const N: usize> Index<&BvhObjKey> for Bvh<T,
     }
 }
 
-impl<T: Bounded<D>, const D: usize, const N: usize> Bounded<D> for Bvh<T, D, N> {
-    type Bound = T;
+impl<T: Bounded<Vec2>, const N: usize> Bounded<Vec2> for Bvh2<T, N> {
+    type Item = T;
+    type Bounds = Bounds2;
 
-    fn bounds(&self) -> Bounds<D> {
+    fn bounds(&self) -> Bounds2 {
         match self.nodes[0] {
-            BvhNode::Node { bounds, .. } => bounds,
-            BvhNode::Leaf(obj_key) => self[obj_key].bounds(),
+            BvhNode2::Node { bounds, .. } => bounds,
+            BvhNode2::Leaf(obj_key) => self[obj_key].bounds(),
         }
     }
 }
 
-impl<T: RayHittable<D>, const D: usize, const N: usize> RayHittable<D> for Bvh<T, D, N> {
-    fn ray_hit(&self, ray: &Ray<D>, t_min: f32, t_max: f32) -> Option<(f32, &T)> {
+impl<T: RayHittable<Vec2, Ray2>, const N: usize> RayHittable<Vec2, Ray2> for Bvh2<T, N> {
+    fn ray_hit(&self, ray: &Ray2, t_min: f32, t_max: f32) -> Option<(f32, &T)> {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.nodes[0]);
         let mut result = None;
@@ -384,7 +403,7 @@ impl<T: RayHittable<D>, const D: usize, const N: usize> RayHittable<D> for Bvh<T
         while let Some(node) = stack.pop() {
             let t_max = result.map_or(t_max, |(t, _)| t);
             match node {
-                BvhNode::Node { bounds, children } => {
+                BvhNode2::Node { bounds, children } => {
                     if bounds.ray_hit(ray, t_min, t_max).is_some() {
                         for child_key in children.iter().rev() {
                             match child_key {
@@ -394,7 +413,7 @@ impl<T: RayHittable<D>, const D: usize, const N: usize> RayHittable<D> for Bvh<T
                         }
                     }
                 }
-                BvhNode::Leaf(obj_key) => {
+                BvhNode2::Leaf(obj_key) => {
                     let obj = &self[obj_key];
                     match obj.ray_hit(ray, t_min, t_max) {
                         None => (),
