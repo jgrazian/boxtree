@@ -10,6 +10,7 @@ pub type Bvh3A<T> = Bvh<Bounds3A, T, 2>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhObjKey(usize);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhNodeKey(pub(crate) usize);
 
@@ -606,5 +607,23 @@ mod test {
         let mut point_hits = bvh.query_point_exact(&p);
         assert_eq!(point_hits.next().unwrap(), (BvhObjKey(0), &bvh.objects[0]));
         assert_eq!(point_hits.next(), None);
+    }
+
+    #[test]
+    fn ray_hit_2d() {
+        let bvh = setup_2d();
+
+        let r = ([-1.0, 0.5], [1.0, 0.0]).into();
+        let hit = bvh.ray_hit(&r, 0.0, f32::MAX);
+        assert_eq!(hit, Some((1.0, &bvh.objects[0])));
+    }
+
+    #[test]
+    fn ray_hit_3d() {
+        let bvh = setup_3d();
+
+        let r = ([-1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).into();
+        let hit = bvh.ray_hit(&r, 0.0, f32::MAX);
+        assert_eq!(hit, Some((1.0, &bvh.objects[0])));
     }
 }
