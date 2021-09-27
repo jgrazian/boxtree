@@ -4,11 +4,8 @@ use crate::bounds::{Bounds2, Bounds3, Bounds3A};
 use crate::iter::BvhLeafIterator;
 use crate::traits::*;
 
-#[allow(dead_code)]
 pub type Bvh2<T> = Bvh<Bounds2, T, 2>;
-#[allow(dead_code)]
 pub type Bvh3<T> = Bvh<Bounds3, T, 2>;
-#[allow(dead_code)]
 pub type Bvh3A<T> = Bvh<Bounds3A, T, 2>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -18,7 +15,6 @@ pub struct BvhNodeKey(pub(crate) usize);
 
 /// A node in a D dimensional BVH.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) enum BvhNode<B: BoundingBox, const N: usize> {
     Node {
         bounds: B,
@@ -137,9 +133,7 @@ impl<'a, B: BoundingBox, T: Bounded<B>, const N: usize> Bvh<B, T, N> {
         centroids: &'a [B::Vector],
         indexes: &'a mut [usize],
     ) -> [Option<&'a mut [usize]>; N] {
-        #[allow(dead_code)]
         const MAX_DIM: usize = 3;
-        #[allow(dead_code)]
         const NUM_BUCKETS: usize = 16;
         let mut cuts = [[0.0; NUM_BUCKETS]; MAX_DIM];
         let mut split_idx = [[0 as usize; NUM_BUCKETS]; MAX_DIM];
