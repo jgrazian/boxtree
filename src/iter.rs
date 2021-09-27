@@ -1,21 +1,22 @@
-use crate::bounds::Bounds;
 use crate::bvh::{Bvh, BvhNode, BvhObjKey};
 use crate::traits::*;
 
-pub struct BvhLeafIterator<'a, T, F, const D: usize, const N: usize>
+pub struct BvhLeafIterator<'a, B, T, F, const N: usize>
 where
-    T: Bounded<D>,
-    F: Fn(&Bounds<D>) -> bool,
+    B: BoundingBox,
+    T: Bounded<B>,
+    F: Fn(&B) -> bool,
 {
-    pub(crate) bvh: &'a Bvh<T, D, N>,
+    pub(crate) bvh: &'a Bvh<B, T, N>,
     pub(crate) predicate: F,
-    pub(crate) stack: Vec<&'a BvhNode<D, N>>,
+    pub(crate) stack: Vec<&'a BvhNode<B, N>>,
 }
 
-impl<'a, T, F, const D: usize, const N: usize> Iterator for BvhLeafIterator<'a, T, F, D, N>
+impl<'a, B, T, F, const N: usize> Iterator for BvhLeafIterator<'a, B, T, F, N>
 where
-    T: Bounded<D>,
-    F: Fn(&Bounds<D>) -> bool,
+    B: BoundingBox,
+    T: Bounded<B>,
+    F: Fn(&B) -> bool,
 {
     type Item = (BvhObjKey, &'a T);
 
