@@ -1,12 +1,13 @@
 # Rust-BVH
 
-A basic **B**ounding **V**olume **H**ierarchy implementation using [glam](https://github.com/bitshifter/glam-rs).
+A basic **B**ounding **V**olume **H**ierarchy implementation using
+[glam](https://github.com/bitshifter/glam-rs).
 
 Rust-BVH aims to be easy to use for any arbitrary 2d or 3d objects.
 
 ```toml
 [dependencies]
-rust-bvh = { version = "0.1.0" }
+rust-bvh = { git = "https://github.com/jgrazian/rust-bvh" }
 ```
 
 ## Basic Example
@@ -56,7 +57,9 @@ let circle_bvh = Bvh2::build(circles);
 
 Finally, query the BVH.
 
-> Note: query_ functions return all objects contained in bounding boxes that pass the query. For stronger filtering of only objects that are actually hit extra trait impls are required (see below).
+> Note: query_ functions return all objects contained in bounding boxes that
+> pass the query. For stronger filtering of only objects that are actually hit
+> extra trait impls are required (see below).
 
 ```rust
 // Using a ray

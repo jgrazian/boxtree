@@ -5,6 +5,7 @@ mod traits;
 
 pub use bounds::{Bounds2, Bounds3, Bounds3A};
 pub use bvh::{Bvh2, Bvh3, Bvh3A};
+pub use traits::*;
 
 pub use glam::{Vec2, Vec3, Vec3A};
 
