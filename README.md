@@ -1,4 +1,4 @@
-# Rust-BVH
+# BoxTree
 
 A basic **B**ounding **V**olume **H**ierarchy implementation using
 [glam](https://github.com/bitshifter/glam-rs).
@@ -7,7 +7,7 @@ Rust-BVH aims to be easy to use for any arbitrary 2d or 3d objects.
 
 ```toml
 [dependencies]
-rust-bvh = { git = "https://github.com/jgrazian/rust-bvh" }
+boxtree = { git = "https://github.com/jgrazian/boxtree" }
 ```
 
 ## Basic Example
@@ -15,7 +15,7 @@ rust-bvh = { git = "https://github.com/jgrazian/rust-bvh" }
 First, implement `Bounded`.
 
 ```rust
-use rust-bvh::{Bounded, Bounds2, Bvh2, Ray2, Vec2};
+use boxtree::{Bounded, Bounds2, Bvh2, Ray2, Vec2};
 
 struct Circle {
     center: Vec2,
