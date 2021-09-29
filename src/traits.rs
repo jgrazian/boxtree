@@ -24,9 +24,9 @@ pub trait Bounded<B: BoundingBox> {
 }
 
 pub trait RayHittable<B: BoundingBox>: Bounded<B> {
-    type Item;
+    type Item: Copy;
 
-    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, &Self::Item)>;
+    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, Self::Item)>;
 }
 
 pub trait BoundsHittable<B: BoundingBox>: Bounded<B> {

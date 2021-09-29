@@ -92,7 +92,7 @@ impl RayHittable<Bounds2> for Bounds2 {
         ray: &<Self as BoundingBox>::Ray,
         t_min: f32,
         t_max: f32,
-    ) -> Option<(f32, &Self::Item)> {
+    ) -> Option<(f32, Self::Item)> {
         let inv_d = ray.direction.recip();
         let t0__ = (self.min - ray.origin) * inv_d;
         let t1__ = (self.max - ray.origin) * inv_d;
@@ -117,9 +117,9 @@ impl RayHittable<Bounds2> for Bounds2 {
 
         match (c1, c2, c3, c4) {
             (true, _, false, _) => None,
-            (true, _, true, _) => Some((t0, &self)),
+            (true, _, true, _) => Some((t0, *self)),
             (false, true, _, false) => None,
-            (false, true, _, true) => Some((t1, &self)),
+            (false, true, _, true) => Some((t1, *self)),
             (_, false, _, _) => None,
         }
     }
@@ -203,7 +203,7 @@ impl RayHittable<Bounds3> for Bounds3 {
         ray: &<Self as BoundingBox>::Ray,
         t_min: f32,
         t_max: f32,
-    ) -> Option<(f32, &Self::Item)> {
+    ) -> Option<(f32, Self::Item)> {
         let inv_d = ray.direction.recip();
         let t0__ = (self.min - ray.origin) * inv_d;
         let t1__ = (self.max - ray.origin) * inv_d;
@@ -226,9 +226,9 @@ impl RayHittable<Bounds3> for Bounds3 {
 
         match (c1, c2, c3, c4) {
             (true, _, false, _) => None,
-            (true, _, true, _) => Some((t0, &self)),
+            (true, _, true, _) => Some((t0, *self)),
             (false, true, _, false) => None,
-            (false, true, _, true) => Some((t1, &self)),
+            (false, true, _, true) => Some((t1, *self)),
             (_, false, _, _) => None,
         }
     }
@@ -312,7 +312,7 @@ impl RayHittable<Bounds3A> for Bounds3A {
         ray: &<Self as BoundingBox>::Ray,
         t_min: f32,
         t_max: f32,
-    ) -> Option<(f32, &Self::Item)> {
+    ) -> Option<(f32, Self::Item)> {
         let inv_d = ray.direction.recip();
         let t0__ = (self.min - ray.origin) * inv_d;
         let t1__ = (self.max - ray.origin) * inv_d;
@@ -335,9 +335,9 @@ impl RayHittable<Bounds3A> for Bounds3A {
 
         match (c1, c2, c3, c4) {
             (true, _, false, _) => None,
-            (true, _, true, _) => Some((t0, &self)),
+            (true, _, true, _) => Some((t0, *self)),
             (false, true, _, false) => None,
-            (false, true, _, true) => Some((t1, &self)),
+            (false, true, _, true) => Some((t1, *self)),
             (_, false, _, _) => None,
         }
     }
@@ -407,16 +407,16 @@ mod test {
         let r2 = ([0.5, 0.5], [0.0, 1.0]).into();
         let r3 = ([0.5, 2.0], [1.0, 0.0]).into();
         let r4 = ([0.5, 2.0], [0.0, 1.0]).into();
-        assert_eq!(a.ray_hit(&r1, 0.0, f32::MAX), Some((1.0, &a))); // hit
-        assert_eq!(a.ray_hit(&r2, 0.0, f32::MAX), Some((0.5, &a))); // hit inside
-        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((-0.5, &a)));
+        assert_eq!(a.ray_hit(&r1, 0.0, f32::MAX), Some((1.0, a))); // hit
+        assert_eq!(a.ray_hit(&r2, 0.0, f32::MAX), Some((0.5, a))); // hit inside
+        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((-0.5, a)));
         assert_eq!(a.ray_hit(&r3, 0.0, f32::MAX), None);
         assert_eq!(a.ray_hit(&r4, 0.0, f32::MAX), None);
 
         let r = ([0.0, -0.5], [0.0, 1.0]).into();
         assert_eq!(a.ray_hit(&r, 0.0, 0.4), None);
         assert_eq!(a.ray_hit(&r, 1.6, f32::MAX), None);
-        assert_eq!(a.ray_hit(&r, 1.4, f32::MAX), Some((1.5, &a)));
+        assert_eq!(a.ray_hit(&r, 1.4, f32::MAX), Some((1.5, a)));
     }
 
     #[test]
@@ -426,16 +426,16 @@ mod test {
         let r2 = ([0.5, 0.5, 0.5], [0.0, 1.0, 0.0]).into(); // intersects from inside
         let r3 = ([0.5, 2.0, 0.5], [1.0, 0.0, 0.0]).into(); // miss
         let r4 = ([0.5, 2.0, 0.5], [0.0, 1.0, 0.0]).into(); // miss
-        assert_eq!(a.ray_hit(&r1, 0.0, f32::MAX), Some((1.0, &a)));
-        assert_eq!(a.ray_hit(&r2, 0.0, f32::MAX), Some((0.5, &a)));
-        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((-0.5, &a)));
+        assert_eq!(a.ray_hit(&r1, 0.0, f32::MAX), Some((1.0, a)));
+        assert_eq!(a.ray_hit(&r2, 0.0, f32::MAX), Some((0.5, a)));
+        assert_eq!(a.ray_hit(&r2, f32::MIN, f32::MAX), Some((-0.5, a)));
         assert_eq!(a.ray_hit(&r3, 0.0, f32::MAX), None);
         assert_eq!(a.ray_hit(&r4, 0.0, f32::MAX), None);
 
         let r = ([0.5, 0.5, -0.5], [0.0, 0.0, 1.0]).into();
         assert_eq!(a.ray_hit(&r, 0.0, 0.4), None);
         assert_eq!(a.ray_hit(&r, 1.6, f32::MAX), None);
-        assert_eq!(a.ray_hit(&r, 1.4, f32::MAX), Some((1.5, &a)));
+        assert_eq!(a.ray_hit(&r, 1.4, f32::MAX), Some((1.5, a)));
     }
 
     #[test]

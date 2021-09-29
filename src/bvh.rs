@@ -376,7 +376,7 @@ impl<B: BoundingBox, T: Bounded<B>, const N: usize> Bounded<B> for Bvh<B, T, N> 
 impl<B: BoundingBox, T: RayHittable<B>, const N: usize> RayHittable<B> for Bvh<B, T, N> {
     type Item = T::Item;
 
-    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, &T::Item)> {
+    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, Self::Item)> {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.nodes[0]);
         let mut result = None;
@@ -615,7 +615,7 @@ mod test {
 
         let r = ([-1.0, 0.5], [1.0, 0.0]).into();
         let hit = bvh.ray_hit(&r, 0.0, f32::MAX);
-        assert_eq!(hit, Some((1.0, &bvh.objects[0])));
+        assert_eq!(hit, Some((1.0, bvh.objects[0])));
     }
 
     #[test]
@@ -624,6 +624,6 @@ mod test {
 
         let r = ([-1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).into();
         let hit = bvh.ray_hit(&r, 0.0, f32::MAX);
-        assert_eq!(hit, Some((1.0, &bvh.objects[0])));
+        assert_eq!(hit, Some((1.0, bvh.objects[0])));
     }
 }
