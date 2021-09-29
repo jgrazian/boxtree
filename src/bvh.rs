@@ -365,8 +365,6 @@ impl<B: BoundingBox, T: Bounded<B>, const N: usize> Index<&BvhObjKey> for Bvh<B,
 }
 
 impl<B: BoundingBox, T: Bounded<B>, const N: usize> Bounded<B> for Bvh<B, T, N> {
-    type Item = T;
-
     fn bounds(&self) -> B {
         match self.nodes[0] {
             BvhNode::Node { bounds, .. } => bounds,
@@ -376,7 +374,9 @@ impl<B: BoundingBox, T: Bounded<B>, const N: usize> Bounded<B> for Bvh<B, T, N> 
 }
 
 impl<B: BoundingBox, T: RayHittable<B>, const N: usize> RayHittable<B> for Bvh<B, T, N> {
-    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, &T)> {
+    type Item = T::Item;
+
+    fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, &T::Item)> {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.nodes[0]);
         let mut result = None;
@@ -397,10 +397,10 @@ impl<B: BoundingBox, T: RayHittable<B>, const N: usize> RayHittable<B> for Bvh<B
                 BvhNode::Leaf(obj_key) => {
                     let obj = &self[obj_key];
                     match obj.ray_hit(ray, t_min, t_max) {
-                        None => (),
-                        Some((t, _)) => {
-                            result = Some((t, obj));
+                        Some((t, item)) => {
+                            result = Some((t, item));
                         }
+                        None => (),
                     }
                 }
             }

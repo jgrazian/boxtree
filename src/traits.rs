@@ -20,12 +20,12 @@ pub trait BoundingBox:
 }
 
 pub trait Bounded<B: BoundingBox> {
-    type Item: Bounded<B>;
-
     fn bounds(&self) -> B;
 }
 
 pub trait RayHittable<B: BoundingBox>: Bounded<B> {
+    type Item;
+
     fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, &Self::Item)>;
 }
 

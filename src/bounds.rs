@@ -73,8 +73,6 @@ impl BoundingBox for Bounds2 {
 }
 
 impl Bounded<Bounds2> for Bounds2 {
-    type Item = Bounds2;
-
     fn bounds(&self) -> Bounds2 {
         *self
     }
@@ -87,6 +85,8 @@ impl From<([f32; 2], [f32; 2])> for Bounds2 {
 }
 
 impl RayHittable<Bounds2> for Bounds2 {
+    type Item = Self;
+
     fn ray_hit(
         &self,
         ray: &<Self as BoundingBox>::Ray,
@@ -184,8 +184,6 @@ impl BoundingBox for Bounds3 {
 }
 
 impl Bounded<Bounds3> for Bounds3 {
-    type Item = Bounds3;
-
     fn bounds(&self) -> Bounds3 {
         *self
     }
@@ -198,6 +196,8 @@ impl From<([f32; 3], [f32; 3])> for Bounds3 {
 }
 
 impl RayHittable<Bounds3> for Bounds3 {
+    type Item = Self;
+
     fn ray_hit(
         &self,
         ray: &<Self as BoundingBox>::Ray,
@@ -293,8 +293,6 @@ impl BoundingBox for Bounds3A {
 }
 
 impl Bounded<Bounds3A> for Bounds3A {
-    type Item = Bounds3A;
-
     fn bounds(&self) -> Bounds3A {
         *self
     }
@@ -307,6 +305,8 @@ impl From<([f32; 3], [f32; 3])> for Bounds3A {
 }
 
 impl RayHittable<Bounds3A> for Bounds3A {
+    type Item = Self;
+
     fn ray_hit(
         &self,
         ray: &<Self as BoundingBox>::Ray,
