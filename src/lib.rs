@@ -17,12 +17,12 @@ pub type Ray3A = Ray<Vec3A>;
 /// Starts at `origin` and goes in the direction `direction`.
 #[derive(Clone, Copy, Debug)]
 pub struct Ray<V> {
-    origin: V,
-    direction: V,
+    pub origin: V,
+    pub direction: V,
 }
 
 impl<V> Ray<V> {
-    fn new(origin: V, direction: V) -> Self {
+    pub fn new(origin: V, direction: V) -> Self {
         Self { origin, direction }
     }
 }
@@ -36,7 +36,7 @@ impl<V> From<(V, V)> for Ray<V> {
 // Vec2
 impl Ray2 {
     #[allow(dead_code)]
-    fn at(&self, t: f32) -> Vec2 {
+    pub fn at(&self, t: f32) -> Vec2 {
         self.origin + self.direction * t
     }
 }
@@ -49,7 +49,7 @@ impl From<([f32; 2], [f32; 2])> for Ray2 {
 // Vec3
 impl Ray3 {
     #[allow(dead_code)]
-    fn at(&self, t: f32) -> Vec3 {
+    pub fn at(&self, t: f32) -> Vec3 {
         self.origin + self.direction * t
     }
 }
@@ -62,7 +62,7 @@ impl From<([f32; 3], [f32; 3])> for Ray3 {
 // Vec3A
 impl Ray3A {
     #[allow(dead_code)]
-    fn at(&self, t: f32) -> Vec3A {
+    pub fn at(&self, t: f32) -> Vec3A {
         self.origin + self.direction * t
     }
 }
