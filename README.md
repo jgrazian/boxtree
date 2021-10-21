@@ -15,18 +15,18 @@ boxtree = { git = "https://github.com/jgrazian/boxtree" }
 First, implement `Bounded`.
 
 ```rust
-use boxtree::{Bounded, Bounds2, Bvh2, Ray2, Vec2};
+use boxtree::{Bounded, Aabb2, Bvh2, Ray2, Vec2};
 
 struct Circle {
     center: Vec2,
     radius: f32,
 }
 
-impl Bounded<Bounds2> for Circle {
+impl Bounded<Aabb2> for Circle {
     type Item = Self;
     
-    fn bounds(&self) -> Bounds2 {
-        Bounds2 {
+    fn bounds(&self) -> Aabb2 {
+        Aabb2 {
             min: self.center - self.radius,
             max: self.center + self.radius,
         }
@@ -69,7 +69,7 @@ let hit_circle = hits_iter.next().unwrap().1;
 assert_eq!(hit_circle.center, Vec2::new(0.0, 0.0));
 
 // Using a bounding box
-let query_bounds = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0));
+let query_bounds = Aabb2::new(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0));
 let hits_iter = circle_bvh.query_bounds(&query_bounds);
 let hit_circle = hits_iter.next().unwrap().1;
 assert_eq!(hit_circle.center, Vec2::new(0.0, 0.0));
@@ -80,8 +80,8 @@ assert_eq!(hit_circle.center, Vec2::new(0.0, 0.0));
 Rust-BVH has specialized traits for fast traversal.
 
 ```rust
-impl RayHittable<Bounds2> for Circle {
-    fn ray_hit(&self, ray: &Bounds2::Ray, t_min: f32, t_max: f32) -> Option<(f32, &Self::Item)> {
+impl RayHittable<Aabb2> for Circle {
+    fn ray_hit(&self, ray: &Aabb2::Ray, t_min: f32, t_max: f32) -> Option<(f32, &Self::Item)> {
         let om = self.center - ray.origin;
         let a = ray.direction.length_squared();
         let b = 2.0*ray.dot(om);
@@ -92,7 +92,7 @@ impl RayHittable<Bounds2> for Circle {
         let q = g * q.sqrt();
         let b = -b*g;
         
-        let t0 = D*B + Q) + ray.origin;
+        let t0 = D*(B + Q) + ray.origin;
         let t1 = D*(B - Q) + ray.origin;
     
     	t0.min(t1)

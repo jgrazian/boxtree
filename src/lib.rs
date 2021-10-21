@@ -3,7 +3,7 @@ pub mod bvh;
 mod iter;
 pub mod traits;
 
-pub use bounds::{Bounds2, Bounds3, Bounds3A};
+pub use bounds::{Aabb2, Aabb3, Aabb3A};
 pub use bvh::{Bvh2, Bvh3, Bvh3A};
 pub use traits::{Bounded, BoundsHittable, PointHittable, RayHittable};
 

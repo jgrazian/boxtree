@@ -1,12 +1,12 @@
 use std::ops::Index;
 
-use crate::bounds::{Bounds2, Bounds3, Bounds3A};
+use crate::bounds::{Aabb2, Aabb3, Aabb3A};
 use crate::iter::BvhLeafIterator;
 use crate::traits::*;
 
-pub type Bvh2<T> = Bvh<Bounds2, T, 2>;
-pub type Bvh3<T> = Bvh<Bounds3, T, 2>;
-pub type Bvh3A<T> = Bvh<Bounds3A, T, 2>;
+pub type Bvh2<T> = Bvh<Aabb2, T, 2>;
+pub type Bvh3<T> = Bvh<Aabb3, T, 2>;
+pub type Bvh3A<T> = Bvh<Aabb3A, T, 2>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhObjKey(usize);
@@ -417,7 +417,7 @@ mod test {
     /// │╟─┐└─╢ ╟─┐└─╢
     /// │╚═╧══╝ ╚═╧══╝
     /// ┼───────────────
-    fn setup_2d() -> Bvh2<Bounds2> {
+    fn setup_2d() -> Bvh2<Aabb2> {
         let objects = vec![
             ([3.0, 0.0], [4.0, 1.0]).into(),
             ([0.0, 0.0], [1.0, 1.0]).into(),
@@ -427,7 +427,7 @@ mod test {
         Bvh2::build(objects)
     }
 
-    fn setup_3d() -> Bvh3<Bounds3> {
+    fn setup_3d() -> Bvh3<Aabb3> {
         let objects = vec![
             ([3.0, 0.0, 0.0], [4.0, 1.0, 1.0]).into(),
             ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]).into(),
@@ -442,7 +442,7 @@ mod test {
         let bvh = setup_2d();
         assert_eq!(bvh.bounds(), ([0.0, 0.0], [5.0, 2.0]).into());
 
-        let objects: Vec<Bounds2> = vec![
+        let objects: Vec<Aabb2> = vec![
             ([0.0, 0.0], [1.0, 1.0]).into(),
             ([0.0, 0.0], [1.0, 1.0]).into(),
             ([0.0, 0.0], [1.0, 1.0]).into(),
@@ -457,7 +457,7 @@ mod test {
         let bvh = setup_3d();
         assert_eq!(bvh.bounds(), ([0.0, 0.0, 0.0], [5.0, 2.0, 2.0]).into());
 
-        let objects: Vec<Bounds3> = vec![
+        let objects: Vec<Aabb3> = vec![
             ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]).into(),
             ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]).into(),
             ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]).into(),
