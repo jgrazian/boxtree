@@ -9,13 +9,16 @@ pub type Bvh2<T> = Bvh<Aabb2, T, 2>;
 pub type Bvh3<T> = Bvh<Aabb3, T, 2>;
 pub type Bvh3A<T> = Bvh<Aabb3A, T, 2>;
 
+/// Can be used to index into a Bvh and retrieve a reference to an object there.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BvhObjKey(usize);
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BvhNodeKey(pub(crate) usize);
+pub(crate) struct BvhNodeKey(pub(crate) usize);
 
-/// A node in a D dimensional BVH.
+/// A Bvh Node.
+/// A Node will always have 2 children.
+/// Leaves contain up to `N` children.
 #[derive(Clone, Debug)]
 pub(crate) enum BvhNode<B: BoundingBox, const N: usize> {
     Node {
@@ -30,7 +33,13 @@ pub(crate) enum BvhNode<B: BoundingBox, const N: usize> {
     },
 }
 
-/// A D dimensional bounding volume hierarchy.
+/// Bounding Volume Hierarchy.
+///
+/// `N` is the maximum number of objects that a single leaf node can hold.
+///
+/// Internally Bvh holds all of its [Bounded] objects in a [Vec]
+/// and all nodes that make up the tree in another [Vec]. Each node holds a reference to its
+/// parent node and either its child nodes or child objects if it is a leaf.
 #[derive(Clone, Debug)]
 pub struct Bvh<B: BoundingBox, T: Bounded<B>, const N: usize> {
     objects: Vec<T>,
@@ -38,6 +47,9 @@ pub struct Bvh<B: BoundingBox, T: Bounded<B>, const N: usize> {
 }
 
 impl<'a, B: BoundingBox, T: Bounded<B> + Clone, const N: usize> Bvh<B, T, N> {
+    /// Constructs a Bvh from a slice of `Bounded + Clone` objects.
+    ///
+    /// The build algorithm is a stack based iteration.
     pub fn build(objects: &[T], split_method: SplitMethod) -> Self {
         let mut out_objects: Vec<T> = Vec::with_capacity(objects.len());
         let centroids = objects
@@ -119,16 +131,35 @@ impl<'a, B: BoundingBox, T: Bounded<B> + Clone, const N: usize> Bvh<B, T, N> {
     }
 }
 
+impl<B: BoundingBox, T: Bounded<B>, const N: usize> Bounded<B> for Bvh<B, T, N> {
+    fn bounds(&self) -> B {
+        match self.nodes[0] {
+            BvhNode::Node { bounds, .. } => bounds,
+            BvhNode::Leaf { bounds, .. } => bounds,
+        }
+    }
+}
+
 impl<'a, B: BoundingBox, T: Bounded<B>, const N: usize> Bvh<B, T, N> {
     const STACK_SIZE: usize = 32;
 
-    pub fn iter_leaves<F: 'a + Fn(&B) -> bool>(
+    /// Creates an iterator over the objects contained within the Bvh in normal DFS traversal order.
+    /// If `predicate` is `false` that node and all children will be skipped during iteration.
+    pub fn iter_objects_pred<F: 'a + Fn(&B) -> bool>(
         &'a self,
         predicate: F,
     ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         BvhLeafIterator::new(&self, predicate)
     }
-
+    /// Iterates over all objects in Bvh in DFS order.
+    pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
+        self.iter_objects_pred(|_| true)
+    }
+    /// Creates an iterator of references to all objects who's parent leaf's
+    /// bounding box intersects with the query ray between times `t_min` and `t_max`.
+    ///
+    /// See [query_ray_exact](Self::query_ray_exact) for intersections
+    /// between the query ray and objects directly.
     pub fn query_ray(
         &'a self,
         ray: &'a B::Ray,
@@ -137,30 +168,35 @@ impl<'a, B: BoundingBox, T: Bounded<B>, const N: usize> Bvh<B, T, N> {
     ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds: &B| bounds.ray_hit(&ray, t_min, t_max).is_some();
 
-        self.iter_leaves(predicate)
+        self.iter_objects_pred(predicate)
     }
-
+    /// Creates an iterator of references to all objects who's parent leaf's
+    /// bounding box intersects with the query bounding box.
+    ///
+    /// See [query_bounds_exact](Self::query_bounds_exact) for intersection
+    /// between bounds and objects directly.
     pub fn query_bounds(&'a self, bounds: &'a B) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds2: &B| bounds.bounds_hit(&bounds2);
 
-        self.iter_leaves(predicate)
+        self.iter_objects_pred(predicate)
     }
-
+    /// Creates an iterator of references to all objects who's parent leaf's
+    /// bounding box intersects with the query bounding box.
+    ///
+    /// See [query_point_exact](Self::query_point_exact) for intersection
+    /// between point and objects directly.
     pub fn query_point(
         &'a self,
         point: &'a B::Vector,
     ) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
         let predicate = move |bounds: &B| bounds.point_hit(&point);
 
-        self.iter_leaves(predicate)
-    }
-
-    pub fn iter_objects(&'a self) -> impl Iterator<Item = (BvhObjKey, &T)> + '_ {
-        self.iter_leaves(|_| true)
+        self.iter_objects_pred(predicate)
     }
 }
 
 impl<'a, B: BoundingBox, T: RayHittable<B>, const N: usize> Bvh<B, T, N> {
+    /// Creates an iterator of references to all objects who intersects with the query ray.
     pub fn query_ray_exact(
         &'a self,
         ray: &'a B::Ray,
@@ -176,6 +212,7 @@ impl<'a, B: BoundingBox, T: RayHittable<B>, const N: usize> Bvh<B, T, N> {
 }
 
 impl<'a, B: BoundingBox, T: BoundsHittable<B>, const N: usize> Bvh<B, T, N> {
+    /// Creates an iterator of references to all objects who intersects with the query bounding box.
     pub fn query_bounds_exact(
         &'a self,
         bounds: &'a B,
@@ -186,6 +223,7 @@ impl<'a, B: BoundingBox, T: BoundsHittable<B>, const N: usize> Bvh<B, T, N> {
 }
 
 impl<'a, B: BoundingBox, T: PointHittable<B>, const N: usize> Bvh<B, T, N> {
+    /// Creates an iterator of references to all objects who intersects with the query point.
     pub fn query_point_exact(
         &'a self,
         point: &'a B::Vector,
@@ -195,34 +233,13 @@ impl<'a, B: BoundingBox, T: PointHittable<B>, const N: usize> Bvh<B, T, N> {
     }
 }
 
-impl<B: BoundingBox, T: Bounded<B>, const N: usize> Index<BvhObjKey> for Bvh<B, T, N> {
-    type Output = T;
-
-    fn index(&self, index: BvhObjKey) -> &Self::Output {
-        &self.objects[index.0]
-    }
-}
-
-impl<B: BoundingBox, T: Bounded<B>, const N: usize> Index<&BvhObjKey> for Bvh<B, T, N> {
-    type Output = T;
-
-    fn index(&self, index: &BvhObjKey) -> &Self::Output {
-        &self.objects[index.0]
-    }
-}
-
-impl<B: BoundingBox, T: Bounded<B>, const N: usize> Bounded<B> for Bvh<B, T, N> {
-    fn bounds(&self) -> B {
-        match self.nodes[0] {
-            BvhNode::Node { bounds, .. } => bounds,
-            BvhNode::Leaf { bounds, .. } => bounds,
-        }
-    }
-}
-
 impl<B: BoundingBox, T: RayHittable<B>, const N: usize> RayHittable<B> for Bvh<B, T, N> {
     type Item = T::Item;
 
+    /// Find the closest object hit by a ray.
+    ///
+    /// You could use [query_ray_exact](Self::query_ray_exact) to perform this function as well
+    /// but this method is optimized better.
     fn ray_hit(&self, ray: &B::Ray, t_min: f32, t_max: f32) -> Option<(f32, Self::Item)> {
         let mut stack = Vec::with_capacity(Self::STACK_SIZE);
         stack.push(&self.nodes[0]);
@@ -257,6 +274,14 @@ impl<B: BoundingBox, T: RayHittable<B>, const N: usize> RayHittable<B> for Bvh<B
             }
         }
         result
+    }
+}
+
+impl<B: BoundingBox, T: Bounded<B>, const N: usize> Index<BvhObjKey> for Bvh<B, T, N> {
+    type Output = T;
+
+    fn index(&self, index: BvhObjKey) -> &Self::Output {
+        &self.objects[index.0]
     }
 }
 

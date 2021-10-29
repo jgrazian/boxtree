@@ -1,9 +1,11 @@
-# BoxTree
+# boxtree
 
-A basic **B**ounding **V**olume **H**ierarchy implementation using
+A basic **B**ounding **V**olume **H**ierarchy (BVH) implementation using
 [glam](https://github.com/bitshifter/glam-rs).
 
-Rust-BVH aims to be easy to use for any arbitrary 2d or 3d objects.
+boxtree aims to be easy to use for any arbitrary 2d or 3d objects.
+
+## Installation
 
 ```toml
 [dependencies]
@@ -12,10 +14,11 @@ boxtree = { git = "https://github.com/jgrazian/boxtree" }
 
 ## Basic Example
 
-First, implement `Bounded`.
+First, implement `Bounded` on your object.
 
 ```rust
-use boxtree::{Bounded, Aabb2, Bvh2, Ray2, Vec2};
+use boxtree::{Bounded, Aabb2, Bvh2, Ray2};
+use glam::Vec2;
 
 struct Circle {
     center: Vec2,
@@ -50,6 +53,10 @@ let circles = vec![
         center: Vec2::new(4.0, 0.0),
         radius: 1.0,
     },
+    Circle {
+        center: Vec2::new(2.0, 2.0),
+        radius: 1.0,
+    },
 ];
 
 let circle_bvh = Bvh2::build(circles);
@@ -62,12 +69,6 @@ Finally, query the BVH.
 > extra trait impls are required (see below).
 
 ```rust
-// Using a ray
-let query_ray = Ray2::new(Vec2::new(0.0, -2.0), Vec2::new(0.0, 1.0));
-let hits_iter = circle_bvh.query_ray(&query_ray, 0.0, f32::MAX);
-let hit_circle = hits_iter.next().unwrap().1;
-assert_eq!(hit_circle.center, Vec2::new(0.0, 0.0));
-
 // Using a bounding box
 let query_bounds = Aabb2::new(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0));
 let hits_iter = circle_bvh.query_bounds(&query_bounds);
@@ -100,6 +101,6 @@ impl RayHittable<Aabb2> for Circle {
 } 
 
 let query_ray = Ray2::new(Vec2::new(0.0, -2.0), Vec2::new(0.0, 1.0));
-let (time, hit_circle) = circle_bvh.ray_hit(query_ray, 0.0, f32::MAX).unwrap(); // No iter this time we get an object directly
+let (time, hit_circle) = circle_bvh.ray_hit(query_ray, 0.0, f32::MAX).unwrap(); // No iter this time. We get an object directly
 assert_eq!(hit_circle.center, Vec2::new(0.0, 0.0));
 ```

@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 pub mod bounds;
 pub mod bvh;
 mod iter;
