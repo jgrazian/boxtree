@@ -1,68 +1,75 @@
+use crate::ray::{Ray2, Ray3, Ray3A};
 use crate::traits::*;
-use crate::{Ray2, Ray3, Ray3A};
 
 use glam::{Vec2, Vec3, Vec3A};
 
-pub type Aabb2 = Aabb<Vec2>;
-pub type Aabb3 = Aabb<Vec3>;
-pub type Aabb3A = Aabb<Vec3A>;
-
-/// A bounding box in D dimensional space.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct Aabb<V> {
-    min: V,
-    max: V,
-}
+// pub type Aabb2 = Aabb<Vec2>;
+// pub type Aabb3 = Aabb<Vec3>;
+// pub type Aabb3A = Aabb<Vec3A>;
 
 macro_rules! impl_bounds {
-    ($dim:expr, $vec:ident, $ray:ident) => {
-        impl Aabb<$vec> {
+    ($name:ident, $dim:expr, $vec:ident, $ray:ident, $comment:expr) => {
+        #[doc=$comment]
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct $name {
+            min: $vec,
+            max: $vec,
+        }
+
+        impl $name {
+            /// Creates a new Aabb with corners at `min` and `max`.
             pub fn new(min: $vec, max: $vec) -> Self {
-                Aabb { min, max }
+                Self { min, max }
             }
         }
 
-        impl From<($vec, $vec)> for Aabb<$vec> {
+        impl From<($vec, $vec)> for $name {
             fn from(tuple: ($vec, $vec)) -> Self {
                 Self::new(tuple.0, tuple.1)
             }
         }
-        impl From<([f32; $dim], [f32; $dim])> for Aabb<$vec> {
+        impl From<([f32; $dim], [f32; $dim])> for $name {
             fn from(tuple: ([f32; $dim], [f32; $dim])) -> Self {
                 Self::new(tuple.0.into(), tuple.1.into())
             }
         }
 
-        impl BoundingBox for Aabb<$vec> {
+        impl BoundingBox for $name {
             const DIM: usize = $dim;
             type Vector = $vec;
             type Ray = $ray;
 
+            /// Bottom left-most corner.
             fn min(&self) -> &Self::Vector {
                 &self.min
             }
+            /// Top right-most corner.
             fn max(&self) -> &Self::Vector {
                 &self.max
             }
+            /// Mutable bottom left-most corner.
             fn min_mut(&mut self) -> &mut Self::Vector {
                 &mut self.min
             }
+            /// Mutable top right-most corner.
             fn max_mut(&mut self) -> &mut Self::Vector {
                 &mut self.max
             }
-
+            #[doc = "Returns a [Vector](Self::Vector) containing side-lengths of the box."]
             fn shape(&self) -> Self::Vector {
                 self.max - self.min
             }
-
+            /// Gets the length of a given dimension of the box.
+            ///
+            #[doc = "Panics if axis > [Self::DIM]."]
             fn axis_length(&self, axis: usize) -> f32 {
                 self.max[axis] - self.min[axis]
             }
-
+            /// Gets the centroid of the box.
             fn centroid(&self) -> Self::Vector {
                 (self.min + self.max) * 0.5
             }
-
+            /// Gets the surface area of the box.
             fn surface_area(&self) -> f32 {
                 let shape = self.shape();
                 let mut area = 0.0;
@@ -73,21 +80,25 @@ macro_rules! impl_bounds {
                 }
                 area * (Self::DIM - 1) as f32
             }
-
+            /// Join two boxes together keeping the smallest `min` and largest `max` between them.
             fn union(&self, other: &Self) -> Self {
                 Self::new(self.min.min(other.min), self.max.max(other.max))
             }
         }
 
-        impl Bounded<Aabb<$vec>> for Aabb<$vec> {
+        impl Bounded<$name> for $name {
+            /// Returns `self`.
             fn bounds(&self) -> Self {
                 *self
             }
         }
 
-        impl RayHittable<Aabb<$vec>> for Aabb<$vec> {
+        impl RayHittable<$name> for $name {
             type Item = Self;
 
+            #[doc="Gets the exact point at which a [Ray](Self::Ray) intersects the box for the first time."]
+            ///
+            /// Returns [None] if the ray misses.
             fn ray_hit(
                 &self,
                 ray: &<Self as BoundingBox>::Ray,
@@ -113,13 +124,15 @@ macro_rules! impl_bounds {
             }
         }
 
-        impl BoundsHittable<Aabb<$vec>> for Aabb<$vec> {
+        impl BoundsHittable<$name> for $name {
+            /// Returns `true` if `bounds` overlaps `self`, `false` otherwise.
             fn bounds_hit(&self, bounds: &Self) -> bool {
                 (self.min.cmple(bounds.max) & self.max.cmpge(bounds.min)).all()
             }
         }
 
-        impl PointHittable<Aabb<$vec>> for Aabb<$vec> {
+        impl PointHittable<$name> for $name {
+            /// Returns `true` if `point` is within `self`, `false` otherwise.
             fn point_hit(&self, point: &<Self as BoundingBox>::Vector) -> bool {
                 (self.min.cmple(*point) & self.max.cmpge(*point)).all()
             }
@@ -127,9 +140,27 @@ macro_rules! impl_bounds {
     };
 }
 
-impl_bounds!(2, Vec2, Ray2);
-impl_bounds!(3, Vec3, Ray3);
-impl_bounds!(3, Vec3A, Ray3A);
+impl_bounds!(
+    Aabb2,
+    2,
+    Vec2,
+    Ray2,
+    "A 2-dimensional bounding box using [Vec2](glam::Vec2)."
+);
+impl_bounds!(
+    Aabb3,
+    3,
+    Vec3,
+    Ray3,
+    "A 3-dimensional bounding box using [Vec3](glam::Vec3)."
+);
+impl_bounds!(
+    Aabb3A,
+    3,
+    Vec3A,
+    Ray3A,
+    "A 3-dimensional bounding box using [Vec3](glam::Vec3A)."
+);
 
 #[cfg(test)]
 mod test {

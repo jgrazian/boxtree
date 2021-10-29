@@ -1,4 +1,4 @@
-use crate::bvh::{self, Bvh, BvhNode, BvhObjKey};
+use crate::bvh::{Bvh, BvhNode, BvhObjKey};
 use crate::traits::*;
 
 pub struct BvhLeafIterator<'a, B, T, F, const N: usize>
@@ -19,7 +19,7 @@ where
     T: Bounded<B>,
     F: Fn(&B) -> bool,
 {
-    pub fn new(bvh: &'a Bvh<B, T, N>, predicate: F) -> Self {
+    pub(crate) fn new(bvh: &'a Bvh<B, T, N>, predicate: F) -> Self {
         let mut stack = Vec::with_capacity(16);
         stack.push(&bvh.nodes[0]);
         let obj_key_stack = Vec::with_capacity(N);
@@ -57,23 +57,24 @@ where
         };
 
         match node {
-            BvhNode::Leaf { bounds, objects } => {
+            BvhNode::Leaf {
+                bounds, objects, ..
+            } => {
                 if (self.predicate)(bounds) {
                     self.obj_key_stack
                         .extend(objects.iter().rev().filter_map(|o| *o))
                 }
             }
-            BvhNode::Node { bounds, children } => {
+            BvhNode::Node {
+                bounds, children, ..
+            } => {
                 if (self.predicate)(bounds) {
                     for child_key in children.iter().rev() {
-                        match child_key {
-                            Some(key) => self.stack.push(&self.bvh.nodes[key.0]),
-                            None => (),
-                        }
+                        self.stack.push(&self.bvh.nodes[child_key.0]);
                     }
                 }
             }
-        };
+        }
         self.next()
     }
 }

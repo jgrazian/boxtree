@@ -1,73 +1,71 @@
 pub mod bounds;
 pub mod bvh;
 mod iter;
+mod split;
 pub mod traits;
 
-pub use bounds::{Aabb2, Aabb3, Aabb3A};
-pub use bvh::{Bvh2, Bvh3, Bvh3A};
-pub use traits::{Bounded, BoundsHittable, PointHittable, RayHittable};
+pub use bounds::*;
+pub use bvh::*;
+pub use ray::*;
+pub use split::*;
+pub use traits::*;
 
-pub use glam::{Vec2, Vec3, Vec3A};
+pub extern crate glam;
 
-pub type Ray2 = Ray<Vec2>;
-pub type Ray3 = Ray<Vec3>;
-pub type Ray3A = Ray<Vec3A>;
+macro_rules! impl_ray {
+    ($name:ident, $vec:ty, $dim:expr, $comment:expr) => {
+        #[doc=$comment]
+        #[derive(Clone, Copy, Debug)]
+        pub struct $name {
+            pub origin: $vec,
+            pub direction: $vec,
+        }
 
-/// A ray in D dimensional space.
-/// Starts at `origin` and goes in the direction `direction`.
-#[derive(Clone, Copy, Debug)]
-pub struct Ray<V> {
-    pub origin: V,
-    pub direction: V,
+        impl $name {
+            /// Creates a new ray at `origin` moving `direction`.
+            pub fn new(origin: $vec, direction: $vec) -> Self {
+                Self { origin, direction }
+            }
+
+            /// Where the ray is in space a given time `t`.
+            ///
+            /// Calculated as `origin + direction*t`.
+            pub fn at(&self, t: f32) -> $vec {
+                self.origin + self.direction * t
+            }
+        }
+
+        impl From<($vec, $vec)> for $name {
+            fn from(tuple: ($vec, $vec)) -> Self {
+                Self::new(tuple.0, tuple.1)
+            }
+        }
+
+        impl From<([f32; $dim], [f32; $dim])> for $name {
+            fn from(tuple: ([f32; $dim], [f32; $dim])) -> Self {
+                Self::new(tuple.0.into(), tuple.1.into())
+            }
+        }
+    };
 }
 
-impl<V> Ray<V> {
-    pub fn new(origin: V, direction: V) -> Self {
-        Self { origin, direction }
-    }
-}
-
-impl<V> From<(V, V)> for Ray<V> {
-    fn from(tuple: (V, V)) -> Self {
-        Self::new(tuple.0, tuple.1)
-    }
-}
-
-// Vec2
-impl Ray2 {
-    #[allow(dead_code)]
-    pub fn at(&self, t: f32) -> Vec2 {
-        self.origin + self.direction * t
-    }
-}
-impl From<([f32; 2], [f32; 2])> for Ray2 {
-    fn from(tuple: ([f32; 2], [f32; 2])) -> Self {
-        Self::new(tuple.0.into(), tuple.1.into())
-    }
-}
-
-// Vec3
-impl Ray3 {
-    #[allow(dead_code)]
-    pub fn at(&self, t: f32) -> Vec3 {
-        self.origin + self.direction * t
-    }
-}
-impl From<([f32; 3], [f32; 3])> for Ray3 {
-    fn from(tuple: ([f32; 3], [f32; 3])) -> Self {
-        Self::new(tuple.0.into(), tuple.1.into())
-    }
-}
-
-// Vec3A
-impl Ray3A {
-    #[allow(dead_code)]
-    pub fn at(&self, t: f32) -> Vec3A {
-        self.origin + self.direction * t
-    }
-}
-impl From<([f32; 3], [f32; 3])> for Ray3A {
-    fn from(tuple: ([f32; 3], [f32; 3])) -> Self {
-        Self::new(tuple.0.into(), tuple.1.into())
-    }
+pub mod ray {
+    impl_ray!(
+        Ray2,
+        glam::Vec2,
+        2,
+        "A 2-dimensional ray using [Vec2](glam::Vec2)."
+    );
+    impl_ray!(
+        Ray3,
+        glam::Vec3,
+        3,
+        "A 3-dimensional ray using [Vec3](glam::Vec3)."
+    );
+    impl_ray!(
+        Ray3A,
+        glam::Vec3A,
+        3,
+        "A 3-dimensional ray using [Vec3A](glam::Vec3A)."
+    );
 }
